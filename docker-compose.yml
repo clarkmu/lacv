@@ -1,0 +1,42 @@
+services:
+  gateway:
+    build: ./deploy/gateway
+    ports:
+      - "8443:443"
+    depends_on:
+      - frontend
+      - backend
+
+  frontend:
+    build: ./frontend
+    expose:
+      - "80"
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://lims:lims_dev_password@db:5432/research_sample_tracker}
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-research_sample_tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-lims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lims_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/002-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lims} -d ${POSTGRES_DB:-research_sample_tracker}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres_data:

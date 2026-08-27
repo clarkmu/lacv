@@ -1,0 +1,225 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1500" viewBox="0 0 1800 1500" role="img" aria-labelledby="title desc">
+  <title id="title">LACV database relational diagram</title>
+  <desc id="desc">Entity relationship diagram for the PostgreSQL schema, showing tables, primary keys, foreign keys, and lineage relationships.</desc>
+  <defs>
+    <style>
+      .canvas { fill: #f5f7fa; }
+      .title { font: 700 28px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill: #17212b; }
+      .subtitle { font: 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill: #526170; }
+      .table { fill: #ffffff; stroke: #b7c3cf; stroke-width: 1.5; }
+      .head { fill: #17324d; }
+      .junction .head { fill: #39566f; }
+      .event .head { fill: #5d4b3f; }
+      .key { fill: #e6f1f8; }
+      .field { font: 12px ui-monospace,SFMono-Regular,Menlo,monospace; fill: #263746; }
+      .field-muted { font: 12px ui-monospace,SFMono-Regular,Menlo,monospace; fill: #697886; }
+      .headtext { font: 700 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill: #ffffff; }
+      .rel { fill: none; stroke: #7890a4; stroke-width: 1.6; }
+      .rel-self { fill: none; stroke: #c07945; stroke-width: 1.8; }
+      .arrow { fill: #7890a4; }
+      .arrow-self { fill: #c07945; }
+      .legend { font: 12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill: #526170; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/></marker>
+    <marker id="arrowSelf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-self"/></marker>
+  </defs>
+  <rect class="canvas" width="1800" height="1500"/>
+  <text class="title" x="50" y="54">LACV database relational diagram</text>
+  <text class="subtitle" x="50" y="80">Primary keys are marked PK, foreign keys are marked FK. Arrows point to the referenced table.</text>
+
+  <!-- Relationships are behind the table nodes. -->
+  <g aria-label="relationships">
+    <path class="rel" d="M 330 300 C 420 300, 440 160, 520 160" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 330 330 C 410 330, 425 500, 520 500" marker-end="url(#arrow)"/>
+    <path class="rel-self" d="M 330 360 C 410 360, 410 425, 450 425 C 490 425, 490 380, 520 380" marker-end="url(#arrowSelf)"/>
+    <path class="rel" d="M 780 540 C 850 540, 850 260, 920 260" marker-end="url(#arrow)"/>
+    <path class="rel-self" d="M 780 570 C 845 570, 850 640, 900 640 C 940 640, 940 590, 980 590" marker-end="url(#arrowSelf)"/>
+    <path class="rel" d="M 780 600 C 850 600, 850 1010, 920 1010" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 780 630 C 840 630, 845 1220, 920 1220" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 780 660 C 835 660, 840 800, 920 800" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 290 C 1260 290, 1260 120, 1340 120" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 320 C 1260 320, 1260 480, 1340 480" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 350 C 1260 350, 1260 850, 1340 850" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 380 C 1250 380, 1250 1190, 1340 1190" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 830 C 1250 830, 1260 930, 1340 930" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 870 C 1250 870, 1260 1270, 1340 1270" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 1060 C 1250 1060, 1260 680, 1340 680" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 1090 C 1250 1090, 1260 1310, 1340 1310" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 1250 C 1250 1250, 1260 720, 1340 720" marker-end="url(#arrow)"/>
+    <path class="rel" d="M 1180 1280 C 1250 1280, 1260 1350, 1340 1350" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- projects -->
+  <g transform="translate(80 110)">
+    <rect class="table" width="250" height="230" rx="4"/>
+    <rect class="head" width="250" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">batches</text>
+    <rect class="key" x="1" y="37" width="248" height="25"/>
+    <text class="field" x="12" y="54">PK batch_id BIGINT</text>
+    <text class="field" x="12" y="80">batch_code VARCHAR(50)</text>
+    <text class="field" x="12" y="101">batch_name VARCHAR(255)</text>
+    <text class="field-muted" x="12" y="122">description TEXT</text>
+    <text class="field" x="12" y="143">is_active BOOLEAN</text>
+    <text class="field-muted" x="12" y="164">created_at TIMESTAMPTZ</text>
+    <text class="field-muted" x="12" y="185">updated_at TIMESTAMPTZ</text>
+  </g>
+
+  <!-- samples -->
+  <g transform="translate(520 110)">
+    <rect class="table" width="260" height="270" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">samples</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK sample_id BIGINT</text>
+    <text class="field" x="12" y="80">FK batch_id BIGINT NULL</text>
+    <text class="field" x="12" y="101">FK parent_sample_id BIGINT NULL</text>
+    <text class="field" x="12" y="122">sample_code VARCHAR(100)</text>
+    <text class="field-muted" x="12" y="143">external_sample_id VARCHAR(100)</text>
+    <text class="field-muted" x="12" y="164">sample_type VARCHAR(100)</text>
+    <text class="field-muted" x="12" y="185">source_type VARCHAR(100)</text>
+    <text class="field-muted" x="12" y="206">collection_date TIMESTAMP</text>
+    <text class="field" x="12" y="227">status VARCHAR(50)</text>
+    <text class="field-muted" x="12" y="248">created_at / updated_at</text>
+  </g>
+
+  <!-- materials -->
+  <g transform="translate(520 450)">
+    <rect class="table" width="260" height="260" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">materials</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK material_id BIGINT</text>
+    <text class="field" x="12" y="80">FK sample_id BIGINT</text>
+    <text class="field" x="12" y="101">FK parent_material_id BIGINT</text>
+    <text class="field" x="12" y="122">FK storage_location_id BIGINT</text>
+    <text class="field" x="12" y="143">material_code VARCHAR(120)</text>
+    <text class="field" x="12" y="164">material_type VARCHAR(100)</text>
+    <text class="field-muted" x="12" y="185">volume / concentration NUMERIC</text>
+    <text class="field" x="12" y="206">status VARCHAR(50)</text>
+    <text class="field-muted" x="12" y="227">created_date / expiration_date</text>
+    <text class="field-muted" x="12" y="248">created_at / updated_at</text>
+  </g>
+
+  <!-- storage_locations -->
+  <g transform="translate(920 110)">
+    <rect class="table" width="260" height="210" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">storage_locations</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK storage_location_id BIGINT</text>
+    <text class="field" x="12" y="80">FK parent_location_id BIGINT</text>
+    <text class="field" x="12" y="101">location_code VARCHAR(100)</text>
+    <text class="field" x="12" y="122">location_type VARCHAR(50)</text>
+    <text class="field-muted" x="12" y="143">location_name VARCHAR(255)</text>
+    <text class="field" x="12" y="164">is_active BOOLEAN</text>
+    <text class="field-muted" x="12" y="185">created_at / updated_at</text>
+  </g>
+
+  <!-- process_events -->
+  <g class="event" transform="translate(920 400)">
+    <rect class="table" width="260" height="210" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">process_events</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK process_event_id BIGINT</text>
+    <text class="field" x="12" y="80">process_code VARCHAR(100)</text>
+    <text class="field" x="12" y="101">process_type VARCHAR(100)</text>
+    <text class="field-muted" x="12" y="122">protocol_name / version</text>
+    <text class="field-muted" x="12" y="143">batch_code VARCHAR(100)</text>
+    <text class="field" x="12" y="164">status VARCHAR(50)</text>
+    <text class="field-muted" x="12" y="185">started_at / completed_at</text>
+  </g>
+
+  <!-- process_event_inputs -->
+  <g class="junction" transform="translate(920 650)">
+    <rect class="table" width="260" height="170" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">process_event_inputs</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK, FK process_event_id</text>
+    <text class="field" x="12" y="75">PK, FK material_id</text>
+    <text class="field-muted" x="12" y="101">quantity_used NUMERIC</text>
+    <text class="field-muted" x="12" y="122">quantity_unit VARCHAR(20)</text>
+  </g>
+
+  <!-- process_event_outputs -->
+  <g class="junction" transform="translate(920 850)">
+    <rect class="table" width="260" height="170" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">process_event_outputs</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK, FK process_event_id</text>
+    <text class="field" x="12" y="75">PK, FK material_id</text>
+    <text class="field-muted" x="12" y="101">quantity_generated NUMERIC</text>
+    <text class="field-muted" x="12" y="122">quantity_unit VARCHAR(20)</text>
+  </g>
+
+  <!-- assays -->
+  <g transform="translate(920 1050)">
+    <rect class="table" width="260" height="220" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">assays</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK assay_id BIGINT</text>
+    <text class="field" x="12" y="80">FK material_id BIGINT</text>
+    <text class="field" x="12" y="101">assay_code VARCHAR(100)</text>
+    <text class="field" x="12" y="122">assay_type VARCHAR(100)</text>
+    <text class="field-muted" x="12" y="143">assay_batch / target</text>
+    <text class="field-muted" x="12" y="164">instrument / operator_name</text>
+    <text class="field" x="12" y="185">status / qc_status</text>
+    <text class="field-muted" x="12" y="206">assay_date TIMESTAMP</text>
+  </g>
+
+  <!-- assay_results -->
+  <g class="junction" transform="translate(920 1200)">
+    <rect class="table" width="260" height="170" rx="4"/>
+    <rect class="head" width="260" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">assay_results</text>
+    <rect class="key" x="1" y="37" width="258" height="25"/>
+    <text class="field" x="12" y="54">PK assay_result_id BIGINT</text>
+    <text class="field" x="12" y="80">FK assay_id BIGINT</text>
+    <text class="field" x="12" y="101">result_name VARCHAR(255)</text>
+    <text class="field-muted" x="12" y="122">numeric_value / text_value</text>
+    <text class="field-muted" x="12" y="143">unit / interpretation</text>
+  </g>
+
+  <!-- storage_events -->
+  <g class="event" transform="translate(1340 50)">
+    <rect class="table" width="340" height="190" rx="4"/>
+    <rect class="head" width="340" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">storage_events</text>
+    <rect class="key" x="1" y="37" width="338" height="25"/>
+    <text class="field" x="12" y="54">PK storage_event_id BIGINT</text>
+    <text class="field" x="12" y="80">FK material_id BIGINT</text>
+    <text class="field" x="12" y="101">FK from_location_id BIGINT NULL</text>
+    <text class="field" x="12" y="122">FK to_location_id BIGINT NULL</text>
+    <text class="field" x="12" y="143">event_type VARCHAR(50)</text>
+    <text class="field-muted" x="12" y="164">event_date / operator_name</text>
+  </g>
+
+  <!-- data_files -->
+  <g class="event" transform="translate(1340 410)">
+    <rect class="table" width="340" height="190" rx="4"/>
+    <rect class="head" width="340" height="36" rx="4"/>
+    <text class="headtext" x="14" y="24">data_files</text>
+    <rect class="key" x="1" y="37" width="338" height="25"/>
+    <text class="field" x="12" y="54">PK data_file_id BIGINT</text>
+    <text class="field" x="12" y="80">FK assay_id BIGINT NULL</text>
+    <text class="field" x="12" y="101">FK material_id BIGINT NULL</text>
+    <text class="field" x="12" y="122">file_type VARCHAR(50)</text>
+    <text class="field" x="12" y="143">file_name VARCHAR(255)</text>
+    <text class="field-muted" x="12" y="164">file_location / checksum_sha256</text>
+  </g>
+
+  <!-- legend -->
+  <g transform="translate(1340 700)">
+    <rect width="340" height="105" fill="#ffffff" stroke="#b7c3cf" rx="4"/>
+    <text class="headtext" x="14" y="26" fill="#17324d">Legend</text>
+    <line x1="14" y1="48" x2="68" y2="48" class="rel" marker-end="url(#arrow)"/>
+    <text class="legend" x="82" y="52">foreign key reference</text>
+    <line x1="14" y1="75" x2="68" y2="75" class="rel-self" marker-end="url(#arrowSelf)"/>
+    <text class="legend" x="82" y="79">self-referential lineage</text>
+  </g>
+
+  <text class="subtitle" x="50" y="1440">Schema source: database/schema.sql | PostgreSQL 17+</text>
+</svg>

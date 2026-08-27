@@ -1,0 +1,281 @@
+# LIMS End-to-End Test Draft
+
+
+
+MISSING:
+
+Batches as main
+
+List materials
+
+Assays (known as Methods on Senaite)
+
+Spreadsheet import
+Support .csv, .xslx,
+
+Storage Locations
+
+
+Sample page also shows process history (process_events, assay)
+
+
+
+
+1. **Create a project**
+   Given I am on the Projects page
+   When I create a project with a unique project code, name, and description
+   Then the project appears in the project list
+   And the project can be selected when creating a sample
+
+2. **Create a root sample**
+   Given an active project exists
+   When I create a new sample with a sample code, sample type, source type, collection date, received date, status, and notes
+   Then the sample appears in the sample table
+   And opening the sample shows its editable fields
+   And the sample has no parent sample
+   And the sample has no child samples yet
+
+3. **Reject duplicate sample codes**
+   Given a sample already exists with sample code `S-001`
+   When I try to create another sample with sample code `S-001`
+   Then the app prevents the duplicate
+   And the original sample remains unchanged
+
+4. **Edit sample fields inline**
+   Given a sample exists
+   When I edit its status, sample type, source description, received date, and notes inline
+   Then the edited values persist after refresh
+   And the sample table reflects the updated status and type
+
+5. **Create a child sample from a parent sample**
+   Given a parent sample exists
+   When I create a child sample from the parent sample page
+   Then the child sample is linked to the parent
+   And the child sample appears in the parent sample's child samples table
+   And opening the child sample shows the parent sample
+   And the child sample does not automatically inherit editable field values from the parent
+
+6. **Create multiple child samples from one parent**
+   Given a parent sample exists
+   When I create two child samples from it
+   Then both child samples appear under the parent
+   And each child sample has the same parent sample
+   And editing one child sample does not change the other child sample or the parent
+
+7. **Create multi-generation sample lineage**
+   Given a root sample exists
+   When I create a child sample from it
+   And then create a child sample from that child
+   Then the lineage can be navigated root -> child -> grandchild
+   And each sample only stores its direct parent sample
+   And the app does not copy fields across generations
+
+8. **Clear or change a sample parent**
+   Given a child sample exists
+   When I change its parent sample to another valid sample
+   Then the old parent no longer lists it as a child
+   And the new parent lists it as a child
+   And the child sample's own fields remain unchanged
+
+9. **Prevent invalid sample lineage**
+   Given samples exist in a lineage
+   When I try to make a sample its own parent
+   Or make a descendant its parent
+   Then the app rejects the change
+   And the existing lineage remains unchanged
+
+10. **Create material from a sample**
+    Given a sample exists
+    When I create a material with material code, material type, subtype, volume, concentration, storage location, status, and notes
+    Then the material appears on the sample page
+    And opening the material shows its source sample
+    And the material has no parent material by default
+
+11. **Reject duplicate material codes**
+    Given a material already exists with material code `M-001`
+    When I try to create another material with material code `M-001`
+    Then the app prevents the duplicate
+    And the original material remains unchanged
+
+12. **Create child material from parent material**
+    Given a parent material exists
+    When I create a child material from it
+    Then the child material is linked to the parent material
+    And the child material appears in the parent material's child materials list
+    And the child material does not automatically inherit volume, concentration, status, storage location, or notes
+
+13. **Track material lineage across samples**
+    Given sample `S-001` has material `M-001`
+    And sample `S-002` exists
+    When I create material `M-002` for sample `S-002` using `M-001` as its parent material
+    Then `M-002` belongs to sample `S-002`
+    And `M-002` shows `M-001` as its parent material
+    And `M-001` shows `M-002` as child material
+
+14. **Record a process event consuming and producing materials**
+    Given input material `M-001` exists
+    When I create a process event with process code, process type, protocol, operator, start time, completion time, and status
+    And I add `M-001` as an input material
+    And I add `M-002` as an output material
+    Then the process event appears in the process history for both materials
+    And `M-001` is shown as an input
+    And `M-002` is shown as an output
+
+15. **Show process history on the sample page**
+    Given a sample has materials involved in process events
+    When I open the sample page
+    Then I can see process events connected to that sample's materials
+    And each event shows its type, status, operator, dates, inputs, and outputs
+
+16. **Create an assay for a material**
+    Given a material exists
+    When I create an assay with assay code, assay type, subtype, batch, target, instrument, operator, assay date, and status
+    Then the assay appears on the material page
+    And the assay appears on the related sample page
+    And the assay is linked to the correct material
+
+17. **Add assay results**
+    Given an assay exists
+    When I add assay results with result name, analyte, numeric value, text value, unit, interpretation, and QC status
+    Then the results appear under the assay
+    And the results persist after refresh
+    And editing a result updates only that result
+
+18. **Review assay QC status**
+    Given an assay has results
+    When I change assay QC status from `not_reviewed` to `accepted` or `rejected`
+    Then the assay list reflects the new QC status
+    And the sample page shows the current assay QC state
+
+19. **Create storage locations**
+    Given I am managing storage
+    When I create a freezer, rack, box, or position with a parent location
+    Then the storage location appears in the storage hierarchy
+    And child locations remain linked to their direct parent location
+
+20. **Move material between storage locations**
+    Given a material is stored in one location
+    When I move it to another storage location
+    Then the material shows the new current location
+    And a storage event records the from location, to location, event type, operator, date, and notes
+
+21. **Show storage history for a material**
+    Given a material has been moved multiple times
+    When I open the material page
+    Then I can see the full storage event history in chronological order
+    And the current material storage location matches the latest move
+
+22. **Attach a data file to an assay**
+    Given an assay exists
+    When I attach a data file with file name, file type, file location, checksum, and notes
+    Then the file appears under the assay
+    And the file remains linked after refresh
+
+23. **Attach a data file to a material**
+    Given a material exists
+    When I attach a data file directly to the material
+    Then the file appears on the material page
+    And the related sample page exposes that material's attached file
+
+24. **Filter and sort samples**
+    Given many samples exist
+    When I filter the sample table by project, status, sample type, or received date
+    Then only matching samples are shown
+    When I sort by sample code, status, or received date
+    Then the table order updates correctly
+
+25. **Paginate sample table**
+    Given more samples exist than fit on one page
+    When I move between pages
+    Then the sample table shows the correct page of results
+    And filters and sorting remain applied
+
+26. **Inline edit from sample table**
+    Given samples are listed in a table
+    When I edit a sample status or type directly in the table
+    Then the change persists
+    And opening the sample detail page shows the same value
+
+27. **Keyboard navigation in editable tables**
+    Given I am editing a table of samples or materials
+    When I use Tab, Shift+Tab, Enter, Escape, and arrow keys
+    Then focus moves predictably
+    And committed edits persist
+    And cancelled edits do not persist
+
+28. **Column visibility in tables**
+    Given I am viewing a sample or material table
+    When I hide and show columns
+    Then the table updates without losing current filters, sorting, pagination, or unsaved edits
+
+29. **Sample detail page summarizes related records**
+    Given a sample has a parent sample, child samples, materials, process events, assays, storage events, and files
+    When I open the sample page
+    Then I can see each related section from one page
+    And each related row links to its detail view
+
+30. **Delete sample with no dependent records**
+    Given a sample has no child samples and no materials
+    When I delete the sample
+    Then it is removed from the sample table
+    And navigating directly to that sample shows a not found state
+
+31. **Prevent unsafe sample delete**
+    Given a sample has child samples or materials
+    When I try to delete it
+    Then the app prevents or warns against deletion
+    And dependent records remain intact
+
+32. **Delete material with no dependent records**
+    Given a material has no child materials, process events, assays, storage events, or files
+    When I delete the material
+    Then it is removed from the material list
+    And the sample page no longer lists it
+
+33. **Prevent unsafe material delete**
+    Given a material has child materials, process events, assays, storage events, or files
+    When I try to delete it
+    Then the app prevents or warns against deletion
+    And all dependent records remain intact
+
+34. **Search by external sample ID**
+    Given samples have external sample IDs
+    When I search for an external sample ID
+    Then matching samples appear
+    And non-matching samples are excluded
+
+35. **End-to-end lineage trace**
+    Given a root sample has child samples
+    And those samples have materials
+    And those materials have child materials, process events, assays, results, storage events, and files
+    When I view the lineage trace for the root sample
+    Then I can follow the chain from original sample through derived samples and materials
+    And each relationship is explicit rather than inferred by copied field values
+
+36. **Reload persistence**
+    Given I create a project, sample, child sample, material, child material, process event, assay, result, storage event, and file
+    When I refresh the browser or restart the app stack
+    Then all records and relationships are still present
+
+37. **API and UI consistency**
+    Given records are created through the UI
+    When I fetch the corresponding REST API endpoints
+    Then the API returns the same field values and relationships shown in the UI
+
+38. **Validation errors are readable**
+    Given I submit invalid required fields, duplicate codes, invalid dates, or invalid lineage links
+    When validation fails
+    Then the app shows a clear field-level or form-level error
+    And no partial record is created
+
+39. **Empty states are useful**
+    Given a new sample has no children, materials, assays, process history, or files
+    When I open the sample page
+    Then each section shows an empty state with the relevant create action
+    And no section appears broken or missing
+
+40. **Senaite-lite scope check**
+    Given I am using the app as a lightweight LIMS
+    When I perform common workflows around samples, materials, lineage, assays, storage, and files
+    Then I can complete those workflows without requiring unused Senaite-style fields
+    And the UI remains table-first, dense, and laboratory-focused
