@@ -92,11 +92,67 @@ The React application is a static browser application, so there is no frontend-s
 - Assay list, assay detail, QC status, result entry, and derived samples produced by an assay.
 - Storage location list, creation, detail, and editing.
 
+## Deploying On The DGX Spark
+
+The DGX runs the stack from the checkout at `~/code/lacv`, on the production branch `main` (origin's default branch). Deploy from that directory:
+
+```bash
+cd ~/code/lacv && ./deploy.sh
+```
+
+See what a deployment would do without changing anything (only `git fetch` runs; no builds, no container changes, no database writes):
+
+```bash
+cd ~/code/lacv && ./deploy.sh --dry-run
+```
+
+`deploy.sh` runs these steps and stops at the first failure:
+
+1. Checks that it is in the LACV repository on `main` with a clean working tree. It refuses otherwise and never cleans, resets, stashes or discards anything.
+2. Fetches origin and shows the current commit, the target commit and the incoming commits. Only fast-forwards are allowed; if local `main` has diverged it stops.
+3. Shows the target Alembic head, any new migration files, and the database's current revision, and says whether backend startup will migrate.
+4. Starts the existing `db` container if needed and waits until PostgreSQL is healthy. It refuses to create a database that does not exist yet, because a new `db` volume would load `schema.sql` and the seed data.
+5. Fast-forwards the checkout. If the update changes `deploy.sh` or `deploy/backup-db.sh`, it re-runs itself with the new version.
+6. Builds the backend, frontend and gateway images while the running containers keep serving.
+7. Backs up the database (see below). No backup, no deployment.
+8. Recreates the backend, whose startup runs `alembic upgrade head`. It waits for the backend's `/health`, fails if the container exits or never becomes healthy, and checks that the database is now at the target Alembic head.
+9. Recreates the frontend, then the gateway (nginx resolves the other containers when it starts), checks that all four services are running, and checks `https://127.0.0.1:8443/api/health` and the frontend page through the gateway.
+
+It ends with the deployed commit, the Alembic revision before and after, the backup file, and the service health. Settings: `LACV_DEPLOY_BRANCH` (production branch), `LACV_BACKUP_DIR` (default `~/lacv-backups`), `LACV_BACKEND_TIMEOUT` (seconds to wait for migration and health, default 300).
+
+### Backups
+
+Every deployment first runs `deploy/backup-db.sh`, which can also be run on its own at any time:
+
+```bash
+cd ~/code/lacv && deploy/backup-db.sh --label manual
+```
+
+It writes `~/lacv-backups/lacv-<UTC timestamp>-<label>.dump` with `pg_dump -Fc`, outside the Git checkout, readable only by you. It fails if `pg_dump` fails or the file is empty, and keeps the file only after `pg_restore --list` can read it. Old backups are never deleted automatically.
+
+### When a deployment fails
+
+The script prints the failing step, `docker compose ps`, the recent backend log (and gateway log for health failures), the database's current Alembic revision, the checkout commit and the backup file. It does not restore the database, roll back containers or downgrade Alembic. A failed migration rolls back its own transaction, but a migration that succeeded is not undone by running older containers, so deciding what to do is an operator action.
+
+### Restoring a backup
+
+Only do this deliberately, after reading the failure output. It replaces the whole database:
+
+```bash
+cd ~/code/lacv
+pg_restore --list ~/lacv-backups/<file>.dump | head
+docker compose stop backend gateway
+docker compose exec -T db sh -c 'dropdb -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error' < ~/lacv-backups/<file>.dump
+```
+
+Then run the code that matches the restored schema (the commit printed as the previous checkout), for example `git switch --detach <previous commit>` followed by `docker compose up -d --build backend frontend gateway`. Switch back to `main` before the next `./deploy.sh`.
+
 ## Migrating An Existing Database
 
-Back up the database first. The backend runs `alembic upgrade head` when it starts, so deploying this version migrates the database.
+The backend runs `alembic upgrade head` when it starts, so deploying a version with new migrations migrates the database. `./deploy.sh` takes a backup first and reports the revision change.
 
-Before deploying, run the read-only identity audit against the database with the current deployed image, mounting this checkout's backend code:
+The Sample-centric migration (`20261030_0004`) needs to be merged into `main` before `./deploy.sh` deploys it. Before deploying it, run the read-only identity audit against the database with the current deployed image, mounting this checkout's backend code:
 
 ```bash
 docker compose run --rm --no-deps -v "$PWD/backend:/src" -w /src backend python scripts/legacy_identity_audit.py --out /src/identity-audit
@@ -115,6 +171,12 @@ LACV_TEST_DATABASE_URL=postgresql+psycopg://lims:lims_dev_password@localhost:543
 ```
 
 Migration tests start from the pre-migration schema and seed data kept in `backend/tests/fixtures/` and run the real Alembic upgrade.
+
+The deployment script has its own tests. They use a throwaway Git origin and a stub `docker`, and run the real `pg_dump`/`pg_restore` against a throwaway database, so they never touch Docker or a deployment:
+
+```bash
+PGHOST=localhost PGPORT=5432 PGUSER=postgres deploy/tests/test_deploy.sh
+```
 
 ## Design Rules
 

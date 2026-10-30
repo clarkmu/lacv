@@ -263,6 +263,12 @@ Development should start with
 
 docker compose up
 
+Production runs on the DGX Spark from ~/code/lacv and is deployed with
+
+./deploy.sh
+
+(./deploy.sh --dry-run shows the plan without changing anything). It backs up PostgreSQL before the backend starts, because backend startup runs alembic upgrade head. Keep deploy.sh conservative: fast-forward only, never git clean/reset, never delete volumes, never restore or downgrade the database automatically. See README.md, "Deploying On The DGX Spark".
+
 The stack consists of:
 
 - frontend
