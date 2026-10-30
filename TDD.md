@@ -6,8 +6,6 @@ MISSING:
 
 Batches as main
 
-List materials
-
 Assays (known as Methods on Senaite)
 
 Spreadsheet import
@@ -84,55 +82,52 @@ Sample page also shows process history (process_events, assay)
    Then the app rejects the change
    And the existing lineage remains unchanged
 
-10. **Create material from a sample**
-    Given a sample exists
-    When I create a material with material code, material type, subtype, volume, concentration, storage location, status, and notes
-    Then the material appears on the sample page
-    And opening the material shows its source sample
-    And the material has no parent material by default
+10. **Aliquot a sample**
+    Given a sample with a quantity exists
+    When I aliquot it into three aliquots with a code prefix, sample type, volume per aliquot, and storage location
+    Then three derived samples appear as children of the sample, coded with the prefix
+    And an aliquoting process event lists the parent as input and the aliquots as outputs
+    And the parent's quantity drops by the total volume used, with a quantity event recorded
+    And the aliquots carry only the values entered on the aliquot form
 
-11. **Reject duplicate material codes**
-    Given a material already exists with material code `M-001`
-    When I try to create another material with material code `M-001`
+11. **Reject duplicate sample codes, including legacy material codes**
+    Given a sample `S-001` exists, and a migrated sample carries the legacy material code `MAT-001-ROOT`
+    When I try to create a sample coded `S-001` or `MAT-001-ROOT`
     Then the app prevents the duplicate
-    And the original material remains unchanged
+    And the existing samples remain unchanged
 
-12. **Create child material from parent material**
-    Given a parent material exists
-    When I create a child material from it
-    Then the child material is linked to the parent material
-    And the child material appears in the parent material's child materials list
-    And the child material does not automatically inherit volume, concentration, status, storage location, or notes
+12. **Derived samples do not inherit values**
+    Given a parent sample with a type, quantity, storage location, and notes
+    When I create a derived sample from it by any route (child, aliquot, process, assay output)
+    Then the derived sample is linked to the parent
+    And it does not automatically inherit type, quantity, concentration, status, storage location, batch, or notes
 
-13. **Track material lineage across samples**
-    Given sample `S-001` has material `M-001`
-    And sample `S-002` exists
-    When I create material `M-002` for sample `S-002` using `M-001` as its parent material
-    Then `M-002` belongs to sample `S-002`
-    And `M-002` shows `M-001` as its parent material
-    And `M-001` shows `M-002` as child material
+13. **Open a sample by a legacy material code**
+    Given a sample was migrated from a legacy material `MAT-010-CHILD`
+    When I scan or type `MAT-010-CHILD` into the open-by-code box
+    Then the matching sample opens
+    And its page lists `MAT-010-CHILD` under legacy identifiers
 
-14. **Record a process event consuming and producing materials**
-    Given input material `M-001` exists
-    When I create a process event with process code, process type, protocol, operator, start time, completion time, and status
-    And I add `M-001` as an input material
-    And I add `M-002` as an output material
-    Then the process event appears in the process history for both materials
-    And `M-001` is shown as an input
-    And `M-002` is shown as an output
+14. **Record a process event consuming and producing samples**
+    Given input sample `S-001` exists
+    When I record an RNA extraction with process code, operator, quantity used, and an output sample `S-001-RNA`
+    Then `S-001-RNA` is created as a child of `S-001`
+    And the process event appears in the process history of both samples, with `S-001` as input and `S-001-RNA` as output
+    And when a process has several inputs, each output must name which input is its parent
 
 15. **Show process history on the sample page**
-    Given a sample has materials involved in process events
+    Given a sample took part in process events
     When I open the sample page
-    Then I can see process events connected to that sample's materials
-    And each event shows its type, status, operator, dates, inputs, and outputs
+    Then I can see the processes in which that sample was an input or output
+    And each event shows its type, role, inputs, outputs, operator, date, and status
+    And processes of descendant samples are not mixed into this list; they are reached through the lineage tree
 
-16. **Create an assay for a material**
-    Given a material exists
-    When I create an assay with assay code, assay type, subtype, batch, target, instrument, operator, assay date, and status
-    Then the assay appears on the material page
-    And the assay appears on the related sample page
-    And the assay is linked to the correct material
+16. **Create an assay for a sample**
+    Given a sample exists
+    When I send it to an assay with assay code, type, target, operator, assay date, and status
+    Then the assay appears on that sample's page and on the assay list
+    And the assay is linked to the correct sample
+    And when the assay produces a derived sample (for example a sequencing library), that sample is a child of the assayed sample and shows which assay produced it
 
 17. **Add assay results**
     Given an assay exists
@@ -153,17 +148,17 @@ Sample page also shows process history (process_events, assay)
     Then the storage location appears in the storage hierarchy
     And child locations remain linked to their direct parent location
 
-20. **Move material between storage locations**
-    Given a material is stored in one location
-    When I move it to another storage location
-    Then the material shows the new current location
+20. **Move a sample between storage locations**
+    Given a sample is stored in one location
+    When I change its storage location on the sample page
+    Then the sample shows the new current location
     And a storage event records the from location, to location, event type, operator, date, and notes
 
-21. **Show storage history for a material**
-    Given a material has been moved multiple times
-    When I open the material page
-    Then I can see the full storage event history in chronological order
-    And the current material storage location matches the latest move
+21. **Show storage history for a sample**
+    Given a sample has been moved multiple times
+    When I open the sample page
+    Then I can see the full storage event history, newest first
+    And the current storage location matches the latest move
 
 22. **Attach a data file to an assay**
     Given an assay exists
@@ -171,11 +166,10 @@ Sample page also shows process history (process_events, assay)
     Then the file appears under the assay
     And the file remains linked after refresh
 
-23. **Attach a data file to a material**
-    Given a material exists
-    When I attach a data file directly to the material
-    Then the file appears on the material page
-    And the related sample page exposes that material's attached file
+23. **Attach a data file to a sample**
+    Given a sample exists
+    When I attach a data file directly to the sample
+    Then the file appears on the sample page
 
 24. **Filter and sort samples**
     Given many samples exist
@@ -197,46 +191,49 @@ Sample page also shows process history (process_events, assay)
     And opening the sample detail page shows the same value
 
 27. **Keyboard navigation in editable tables**
-    Given I am editing a table of samples or materials
+    Given I am editing a table of samples
     When I use Tab, Shift+Tab, Enter, Escape, and arrow keys
     Then focus moves predictably
     And committed edits persist
     And cancelled edits do not persist
 
 28. **Column visibility in tables**
-    Given I am viewing a sample or material table
+    Given I am viewing a sample table
     When I hide and show columns
     Then the table updates without losing current filters, sorting, pagination, or unsaved edits
 
 29. **Sample detail page summarizes related records**
-    Given a sample has a parent sample, child samples, materials, process events, assays, storage events, and files
+    Given a sample has a parent sample, child samples, process events, assays, storage events, quantity events, and files
     When I open the sample page
     Then I can see each related section from one page
     And each related row links to its detail view
 
 30. **Delete sample with no dependent records**
-    Given a sample has no child samples and no materials
+    Given a sample has no child samples, process links, assays, or files
     When I delete the sample
     Then it is removed from the sample table
     And navigating directly to that sample shows a not found state
 
 31. **Prevent unsafe sample delete**
-    Given a sample has child samples or materials
+    Given a sample has child samples, process links, assays, files, or legacy material records
     When I try to delete it
     Then the app prevents or warns against deletion
     And dependent records remain intact
 
-32. **Delete material with no dependent records**
-    Given a material has no child materials, process events, assays, storage events, or files
-    When I delete the material
-    Then it is removed from the material list
-    And the sample page no longer lists it
+32. **Shipping batches contain only root samples**
+    Given a batch of imported samples
+    When I try to put a derived sample into a batch, or give a batched sample a parent
+    Then the app rejects the change with a readable error
+    And batch import creates only root samples whose sample type names an existing sample type
 
-33. **Prevent unsafe material delete**
-    Given a material has child materials, process events, assays, storage events, or files
-    When I try to delete it
-    Then the app prevents or warns against deletion
-    And all dependent records remain intact
+33. **Migrate legacy materials without loss**
+    Given a database where each material is the inventory record of a sample
+    When the Sample-centric migration runs
+    Then each material's quantity, concentration, storage, type, label, and status are on its sample
+    And notes from both are kept, the material's labelled with its code
+    And process, quantity, assay, storage, and file history point at the same physical sample
+    And a material that was a real derivative becomes its own derived sample keeping the material code
+    And ambiguous identities stop the migration without changing anything
 
 34. **Search by external sample ID**
     Given samples have external sample IDs
@@ -246,14 +243,13 @@ Sample page also shows process history (process_events, assay)
 
 35. **End-to-end lineage trace**
     Given a root sample has child samples
-    And those samples have materials
-    And those materials have child materials, process events, assays, results, storage events, and files
+    And those samples have their own derived samples, process events, assays, results, storage events, and files
     When I view the lineage trace for the root sample
-    Then I can follow the chain from original sample through derived samples and materials
+    Then I can follow the chain from the original sample through every derived sample
     And each relationship is explicit rather than inferred by copied field values
 
 36. **Reload persistence**
-    Given I create a project, sample, child sample, material, child material, process event, assay, result, storage event, and file
+    Given I create a batch, sample, child sample, aliquots, process event, assay, result, storage event, and file
     When I refresh the browser or restart the app stack
     Then all records and relationships are still present
 
@@ -269,13 +265,13 @@ Sample page also shows process history (process_events, assay)
     And no partial record is created
 
 39. **Empty states are useful**
-    Given a new sample has no children, materials, assays, process history, or files
+    Given a new sample has no children, assays, process history, or files
     When I open the sample page
     Then each section shows an empty state with the relevant create action
     And no section appears broken or missing
 
 40. **Senaite-lite scope check**
     Given I am using the app as a lightweight LIMS
-    When I perform common workflows around samples, materials, lineage, assays, storage, and files
+    When I perform common workflows around samples, lineage, assays, storage, and files
     Then I can complete those workflows without requiring unused Senaite-style fields
     And the UI remains table-first, dense, and laboratory-focused

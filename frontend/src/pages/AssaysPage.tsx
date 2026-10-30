@@ -15,7 +15,7 @@ export function AssaysPage() {
       </div>
       {query.isLoading ? <p>Loading assays...</p> : <ListTable<AssayBrief>
         rows={query.data ?? []}
-        searchPlaceholder="Search assays by name, code, type, target, material, status, or operator"
+        searchPlaceholder="Search assays by name, code, type, target, sample, status, or operator"
         getRowKey={assay => assay.assay_id}
         emptyMessage="No assays match your search."
         columns={[
@@ -23,7 +23,7 @@ export function AssaysPage() {
           { key: 'assay_name', label: 'Name', value: assay => assay.assay_name },
           { key: 'assay_type', label: 'Type', value: assay => assay.assay_type },
           { key: 'target', label: 'Target', value: assay => assay.target },
-          { key: 'material', label: 'Material', value: assay => assay.material.material_code, render: assay => <Link className="font-medium text-blue-700 hover:underline" to={`/material/${assay.material.material_id}`}>{assay.material.material_code}</Link> },
+          { key: 'sample', label: 'Sample', value: assay => assay.sample.sample_code, render: assay => <Link className="font-medium text-blue-700 hover:underline" to={`/sample/${assay.sample.sample_id}`}>{assay.sample.sample_code}</Link> },
           { key: 'operator_name', label: 'Operator', value: assay => assay.operator_name },
           { key: 'assay_date', label: 'Date', value: assay => assay.assay_date },
           { key: 'status', label: 'Status', value: assay => assay.status },

@@ -9,9 +9,8 @@ type ImportState = {
   fileName?: string
 }
 
-const columns: { key: keyof BatchSampleImportRow; label: string; inputMode?: 'numeric' }[] = [
+const columns: { key: keyof BatchSampleImportRow; label: string }[] = [
   { key: 'sample_code', label: 'Sample code' },
-  { key: 'parent_sample_id', label: 'Parent sample ID', inputMode: 'numeric' },
   { key: 'external_sample_id', label: 'External sample ID' },
   { key: 'sample_type', label: 'Sample type' },
   { key: 'source_type', label: 'Source type' },
@@ -31,7 +30,6 @@ export function BatchImportConfirmPage() {
   const normalizedSamples = useMemo(() => samples.map(sample => ({
     ...sample,
     sample_code: sample.sample_code || '',
-    parent_sample_id: sample.parent_sample_id ? Number(sample.parent_sample_id) : null,
     collection_date: sample.collection_date || null,
     received_date: sample.received_date || null,
     status: sample.status || 'expected',
@@ -45,8 +43,7 @@ export function BatchImportConfirmPage() {
   function updateCell(rowIndex: number, key: keyof BatchSampleImportRow, value: string) {
     setSamples(current => current.map((sample, index) => {
       if (index !== rowIndex) return sample
-      const nextValue = key === 'parent_sample_id' ? (value ? Number(value) : null) : value || null
-      return { ...sample, [key]: nextValue }
+      return { ...sample, [key]: value || null }
     }))
   }
 
@@ -58,7 +55,7 @@ export function BatchImportConfirmPage() {
     <section className="space-y-5">
       <div>
         <h1 className="text-2xl font-semibold">Confirm batch import</h1>
-        <p className="mt-1 text-sm text-slate-500">{state.fileName || 'Imported XLSX'} · {samples.length} sample rows</p>
+        <p className="mt-1 text-sm text-slate-500">{state.fileName || 'Imported XLSX'} · {samples.length} root sample rows · sample type must name an existing sample type</p>
       </div>
       <label className="block max-w-xl text-sm font-medium">Batch Name<input required value={batchName} onChange={event => setBatchName(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -72,7 +69,7 @@ export function BatchImportConfirmPage() {
               {samples.map((sample, rowIndex) => (
                 <tr className="border-t border-slate-100" key={rowIndex}>
                   <td className="px-3 py-2 text-slate-500">{rowIndex + 1}</td>
-                  {columns.map(column => <td className="px-3 py-2" key={column.key}><input inputMode={column.inputMode} value={sample[column.key] ?? ''} onChange={event => updateCell(rowIndex, column.key, event.target.value)} className="w-full min-w-32 rounded border border-slate-200 px-2 py-1" /></td>)}
+                  {columns.map(column => <td className="px-3 py-2" key={column.key}><input value={sample[column.key] ?? ''} onChange={event => updateCell(rowIndex, column.key, event.target.value)} className="w-full min-w-32 rounded border border-slate-200 px-2 py-1" /></td>)}
                 </tr>
               ))}
             </tbody>

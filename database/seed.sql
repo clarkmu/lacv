@@ -1,16 +1,16 @@
--- Deterministic development data. Each loop creates 50 linked workflow examples.
+-- Deterministic development data. Each loop creates one linked workflow example:
+-- a root sample in a shipping batch, a derived sample produced by a process event,
+-- quantity and storage history, and an assay with a result and data file.
 DO $$
 DECLARE
 	item INTEGER;
 	batch_id_value BIGINT;
 	root_sample_id BIGINT;
 	child_sample_id BIGINT;
-	root_material_id BIGINT;
-	child_material_id BIGINT;
 	process_event_id_value BIGINT;
 	assay_id_value BIGINT;
 	storage_location_id_value BIGINT;
-	material_type_id_value BIGINT;
+	sample_type_id_value BIGINT;
 	process_type_id_value BIGINT;
 	protocol_id_value BIGINT;
 	assay_definition_id_value BIGINT;
@@ -18,9 +18,9 @@ DECLARE
 	parent_location_id_value BIGINT;
 BEGIN
 	FOR item IN 1..50 LOOP
-		INSERT INTO material_types (type_code, type_name, description, sort_order)
-		VALUES ('material_type_' || lpad(item::text, 3, '0'), 'Material type ' || item, 'Seeded material type', item)
-		RETURNING material_type_id INTO material_type_id_value;
+		INSERT INTO sample_types (type_code, type_name, description, sort_order)
+		VALUES ('sample_type_' || lpad(item::text, 3, '0'), 'Sample type ' || item, 'Seeded sample type', item)
+		RETURNING sample_type_id INTO sample_type_id_value;
 
 		INSERT INTO process_types (type_code, type_name, description, sort_order)
 		VALUES ('process_type_' || lpad(item::text, 3, '0'), 'Process type ' || item, 'Seeded process type', item)
@@ -31,35 +31,8 @@ BEGIN
 		RETURNING protocol_id INTO protocol_id_value;
 
 		INSERT INTO batches (batch_code, batch_name, description)
-		VALUES ('BATCH-' || lpad(item::text, 3, '0'), 'Seeded batch ' || item, 'Seeded relationship example')
+		VALUES ('BATCH-' || lpad(item::text, 3, '0'), 'Seeded batch ' || item, 'Seeded shipping batch')
 		RETURNING batch_id INTO batch_id_value;
-
-		INSERT INTO samples (batch_id, sample_code, sample_type, source_type, source_description, collection_date, received_date, status, notes)
-		VALUES (batch_id_value, 'SAMPLE-' || lpad(item::text, 3, '0') || '-ROOT', 'Incoming sample', 'Seed source', 'Root sample ' || item, CURRENT_TIMESTAMP - (item || ' days')::interval, CURRENT_TIMESTAMP - (item || ' days')::interval, 'available', 'Seeded root')
-		RETURNING sample_id INTO root_sample_id;
-
-		INSERT INTO samples (batch_id, parent_sample_id, sample_code, sample_type, source_type, source_description, status, notes)
-		VALUES (batch_id_value, root_sample_id, 'SAMPLE-' || lpad(item::text, 3, '0') || '-CHILD', 'Derived sample', 'Seed workflow', 'Child sample ' || item, 'available', 'Seeded child')
-		RETURNING sample_id INTO child_sample_id;
-
-		INSERT INTO materials (sample_id, material_type_id, material_code, material_label, material_subtype, current_quantity, quantity_unit, concentration, concentration_unit, status, notes)
-		VALUES (root_sample_id, material_type_id_value, 'MAT-' || lpad(item::text, 3, '0') || '-ROOT', 'Root material ' || item, 'root', 100, 'uL', 10, 'ng/uL', 'available', 'Seeded root material')
-		RETURNING material_id INTO root_material_id;
-
-		INSERT INTO materials (sample_id, material_type_id, parent_material_id, material_code, material_label, material_subtype, current_quantity, quantity_unit, concentration, concentration_unit, status, notes)
-		VALUES (child_sample_id, material_type_id_value, root_material_id, 'MAT-' || lpad(item::text, 3, '0') || '-CHILD', 'Child material ' || item, 'derivative', 50, 'uL', 5, 'ng/uL', 'available', 'Seeded child material')
-		RETURNING material_id INTO child_material_id;
-
-		INSERT INTO process_events (process_code, process_type_id, protocol_id, batch_code, operator_name, started_at, completed_at, status, notes)
-		VALUES ('PROCESS-' || lpad(item::text, 3, '0'), process_type_id_value, protocol_id_value, 'BATCH-' || lpad(item::text, 3, '0'), 'Seed Operator ' || item, CURRENT_TIMESTAMP - (item || ' hours')::interval, CURRENT_TIMESTAMP - ((item - 1) || ' hours')::interval, 'completed', 'Seeded transformation')
-		RETURNING process_event_id INTO process_event_id_value;
-
-		INSERT INTO process_event_inputs (process_event_id, material_id, quantity_used, quantity_unit, notes)
-		VALUES (process_event_id_value, root_material_id, 50, 'uL', 'Seeded input');
-		INSERT INTO process_event_outputs (process_event_id, material_id, quantity_generated, quantity_unit, notes)
-		VALUES (process_event_id_value, child_material_id, 50, 'uL', 'Seeded output');
-		INSERT INTO material_quantity_events (material_id, event_type, quantity_change, quantity_unit, quantity_before, quantity_after, related_process_event_id, operator_name, notes)
-		VALUES (root_material_id, 'consumed', -50, 'uL', 100, 50, process_event_id_value, 'Seed Operator ' || item, 'Seeded quantity change');
 
 		IF item <= 5 THEN
 			INSERT INTO storage_locations (location_code, location_type, location_name, description)
@@ -73,9 +46,35 @@ BEGIN
 			VALUES (parent_location_id_value, 'BOX-' || lpad(item::text, 3, '0'), 'box', 'Seeded box ' || item, 'Seeded child storage location')
 			RETURNING storage_location_id INTO storage_location_id_value;
 		END IF;
-		UPDATE materials SET storage_location_id = storage_location_id_value WHERE material_id IN (root_material_id, child_material_id);
-		INSERT INTO storage_events (material_id, to_location_id, event_type, operator_name, notes)
-		VALUES (child_material_id, storage_location_id_value, 'stored', 'Seed Operator ' || item, 'Seeded storage event');
+
+		-- Only root samples belong to a shipping batch.
+		INSERT INTO samples (batch_id, sample_code, sample_type_id, label, source_type, source_description, collection_date, received_date, status,
+			current_quantity, quantity_unit, concentration, concentration_unit, storage_location_id, notes)
+		VALUES (batch_id_value, 'SAMPLE-' || lpad(item::text, 3, '0') || '-ROOT', sample_type_id_value, 'Root sample ' || item, 'Seed source', 'Root sample ' || item,
+			CURRENT_TIMESTAMP - (item || ' days')::interval, CURRENT_TIMESTAMP - (item || ' days')::interval, 'available',
+			50, 'uL', 10, 'ng/uL', storage_location_id_value, 'Seeded root')
+		RETURNING sample_id INTO root_sample_id;
+
+		INSERT INTO samples (parent_sample_id, sample_code, sample_type_id, label, source_type, source_description, status,
+			current_quantity, quantity_unit, concentration, concentration_unit, storage_location_id, notes)
+		VALUES (root_sample_id, 'SAMPLE-' || lpad(item::text, 3, '0') || '-CHILD', sample_type_id_value, 'Child sample ' || item, 'Seed workflow', 'Child sample ' || item, 'available',
+			50, 'uL', 5, 'ng/uL', storage_location_id_value, 'Seeded child')
+		RETURNING sample_id INTO child_sample_id;
+
+		INSERT INTO process_events (process_code, process_type_id, protocol_id, batch_code, operator_name, started_at, completed_at, status, notes)
+		VALUES ('PROCESS-' || lpad(item::text, 3, '0'), process_type_id_value, protocol_id_value, 'BATCH-' || lpad(item::text, 3, '0'), 'Seed Operator ' || item, CURRENT_TIMESTAMP - (item || ' hours')::interval, CURRENT_TIMESTAMP - ((item - 1) || ' hours')::interval, 'completed', 'Seeded transformation')
+		RETURNING process_event_id INTO process_event_id_value;
+
+		INSERT INTO process_event_inputs (process_event_id, sample_id, quantity_used, quantity_unit, notes)
+		VALUES (process_event_id_value, root_sample_id, 50, 'uL', 'Seeded input');
+		INSERT INTO process_event_outputs (process_event_id, sample_id, quantity_generated, quantity_unit, notes)
+		VALUES (process_event_id_value, child_sample_id, 50, 'uL', 'Seeded output');
+		INSERT INTO sample_quantity_events (sample_id, event_type, quantity_change, quantity_unit, quantity_before, quantity_after, related_process_event_id, operator_name, notes)
+		VALUES (root_sample_id, 'consumed', -50, 'uL', 100, 50, process_event_id_value, 'Seed Operator ' || item, 'Seeded quantity change');
+
+		INSERT INTO storage_events (sample_id, to_location_id, event_type, operator_name, notes)
+		VALUES (root_sample_id, storage_location_id_value, 'stored', 'Seed Operator ' || item, 'Seeded storage event'),
+			(child_sample_id, storage_location_id_value, 'stored', 'Seed Operator ' || item, 'Seeded storage event');
 
 		INSERT INTO assay_definitions (assay_code, assay_name, assay_type, target, protocol_id, description)
 		VALUES ('ASSAY-DEF-' || lpad(item::text, 3, '0'), 'Seeded assay definition ' || item, 'screening', 'Target ' || item, protocol_id_value, 'Seeded definition')
@@ -83,12 +82,12 @@ BEGIN
 		INSERT INTO assay_runs (run_code, run_type, instrument, platform, operator_name, status, notes)
 		VALUES ('RUN-' || lpad(item::text, 3, '0'), 'screening', 'Instrument ' || item, 'Platform ' || item, 'Seed Operator ' || item, 'completed', 'Seeded run')
 		RETURNING assay_run_id INTO assay_run_id_value;
-		INSERT INTO assays (assay_instance_code, material_id, assay_definition_id, assay_run_id, operator_name, assay_date, status, qc_status, notes)
-		VALUES ('ASSAY-' || lpad(item::text, 3, '0'), child_material_id, assay_definition_id_value, assay_run_id_value, 'Seed Operator ' || item, CURRENT_TIMESTAMP, 'completed', CASE WHEN item % 2 = 0 THEN 'accepted' ELSE 'not_reviewed' END, 'Seeded assay')
+		INSERT INTO assays (assay_instance_code, sample_id, assay_definition_id, assay_run_id, operator_name, assay_date, status, qc_status, notes)
+		VALUES ('ASSAY-' || lpad(item::text, 3, '0'), child_sample_id, assay_definition_id_value, assay_run_id_value, 'Seed Operator ' || item, CURRENT_TIMESTAMP, 'completed', CASE WHEN item % 2 = 0 THEN 'accepted' ELSE 'not_reviewed' END, 'Seeded assay')
 		RETURNING assay_id INTO assay_id_value;
 		INSERT INTO assay_results (assay_id, analyte, result_name, numeric_value, text_value, unit, interpretation, qc_status)
 		VALUES (assay_id_value, 'Analyte ' || item, 'Result ' || item, item * 1.25, CASE WHEN item % 2 = 0 THEN 'positive' ELSE 'negative' END, 'Ct', 'Seeded result', CASE WHEN item % 2 = 0 THEN 'accepted' ELSE 'not_reviewed' END);
-		INSERT INTO data_files (assay_id, material_id, file_type, file_name, file_location, checksum_sha256, notes)
-		VALUES (assay_id_value, child_material_id, 'result', 'seed-result-' || lpad(item::text, 3, '0') || '.csv', '/seed/data/result-' || item || '.csv', lpad(md5('seed-file-' || item), 64, '0'), 'Seeded file');
+		INSERT INTO data_files (assay_id, sample_id, file_type, file_name, file_location, checksum_sha256, notes)
+		VALUES (assay_id_value, child_sample_id, 'result', 'seed-result-' || lpad(item::text, 3, '0') || '.csv', '/seed/data/result-' || item || '.csv', lpad(md5('seed-file-' || item), 64, '0'), 'Seeded file');
 	END LOOP;
 END $$;

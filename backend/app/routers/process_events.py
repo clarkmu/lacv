@@ -2,35 +2,36 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
-from ..models import Material, MaterialQuantityEvent, ProcessEvent, ProcessEventInput, ProcessEventOutput, ProcessType, Sample, StorageEvent, StorageLocation
-from ..routers.materials import get_material
-from ..schemas import ProcessEventCreate
+from ..models import ProcessEvent, ProcessEventInput, ProcessEventOutput, ProcessType, Protocol, Sample
+from ..sample_rules import consume, create_derived_sample, get_or_create_process_type, get_sample_or_404
+from ..schemas import ProcessEventCreate, ProcessEventDetail, ProcessTypeBrief
 
 router = APIRouter(prefix="/process-events", tags=["process-events"])
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ProcessEventDetail, status_code=status.HTTP_201_CREATED)
 def create_process_event(payload: ProcessEventCreate, db: Session = Depends(get_db)):
-    if not payload.input_material_ids:
-        raise HTTPException(400, "At least one input material is required")
-    if not payload.output_materials:
-        raise HTTPException(400, "At least one output material is required")
-    input_materials = [db.get(Material, material_id) for material_id in payload.input_material_ids]
-    if any(material is None for material in input_materials):
-        raise HTTPException(404, "Input material not found")
-    for output in payload.output_materials:
-        if not db.get(Sample, output.sample_id):
-            raise HTTPException(404, f"Sample not found: {output.sample_id}")
-        if output.storage_location_id is not None and not db.get(StorageLocation, output.storage_location_id):
-            raise HTTPException(404, f"Storage location not found: {output.storage_location_id}")
+    """A transformation consumes input Samples and creates derived output Samples."""
+    if not payload.input_sample_ids:
+        raise HTTPException(400, "At least one input sample is required")
+    if len(set(payload.input_sample_ids)) != len(payload.input_sample_ids):
+        raise HTTPException(400, "Each input sample may be listed only once")
+    if not payload.output_samples:
+        raise HTTPException(400, "At least one output sample is required")
+    if db.scalar(select(ProcessEvent.process_event_id).where(ProcessEvent.process_code == payload.process_code)):
+        raise HTTPException(400, f"Process code already exists: {payload.process_code}")
+    if payload.protocol_id is not None and not db.get(Protocol, payload.protocol_id):
+        raise HTTPException(404, f"Protocol not found: {payload.protocol_id}")
+    inputs = [get_sample_or_404(sample_id, db, "Input sample") for sample_id in payload.input_sample_ids]
+    parent_ids = [_output_parent_id(output.parent_sample_id, payload.input_sample_ids) for output in payload.output_samples]
 
-    process_type = _get_or_create_process_type(payload.process_type, db)
     process = ProcessEvent(
         process_code=payload.process_code,
-        process_type_id=process_type.process_type_id,
+        process_type_id=get_or_create_process_type(payload.process_type, db).process_type_id,
+        protocol_id=payload.protocol_id,
         operator_name=payload.operator_name,
         started_at=payload.started_at or datetime.utcnow(),
         completed_at=payload.completed_at,
@@ -40,68 +41,72 @@ def create_process_event(payload: ProcessEventCreate, db: Session = Depends(get_
     db.add(process)
     db.flush()
 
-    for material in input_materials:
+    for sample in inputs:
         db.add(ProcessEventInput(
             process_event_id=process.process_event_id,
-            material_id=material.material_id,
+            sample_id=sample.sample_id,
             quantity_used=payload.quantity_used,
             quantity_unit=payload.quantity_unit,
             notes=payload.notes,
         ))
-        if payload.quantity_used is not None and material.current_quantity is not None:
-            before = material.current_quantity
-            material.current_quantity = before - payload.quantity_used
-            db.add(MaterialQuantityEvent(
-                material_id=material.material_id,
-                event_type="consumed",
-                quantity_change=-payload.quantity_used,
-                quantity_unit=payload.quantity_unit or material.quantity_unit or "",
-                quantity_before=before,
-                quantity_after=material.current_quantity,
-                related_process_event_id=process.process_event_id,
-                event_date=datetime.utcnow(),
-                operator_name=payload.operator_name,
-                notes=payload.notes,
-            ))
+        consume(sample, payload.quantity_used, db, payload.quantity_unit, process.process_event_id, payload.operator_name, payload.notes)
 
-    for output in payload.output_materials:
-        output_data = output.model_dump(exclude={"quantity_generated"})
-        if output_data.get("parent_material_id") is None and len(input_materials) == 1:
-            output_data["parent_material_id"] = input_materials[0].material_id
-        material = Material(**output_data)
-        db.add(material)
-        db.flush()
+    for output, parent_id in zip(payload.output_samples, parent_ids):
+        sample = create_derived_sample(parent_id, output, db, payload.operator_name)
         db.add(ProcessEventOutput(
             process_event_id=process.process_event_id,
-            material_id=material.material_id,
+            sample_id=sample.sample_id,
             quantity_generated=output.quantity_generated,
             quantity_unit=output.quantity_unit,
             notes=payload.notes,
         ))
-        if material.storage_location_id is not None:
-            db.add(StorageEvent(
-                material_id=material.material_id,
-                from_location_id=None,
-                to_location_id=material.storage_location_id,
-                event_type="stored",
-                event_date=datetime.utcnow(),
-            ))
 
     db.commit()
-    return get_material(input_materials[0].material_id, db)
+    return get_process_event(process.process_event_id, db)
 
 
-@router.get("/types")
+@router.get("/types", response_model=list[ProcessTypeBrief])
 def list_process_types(db: Session = Depends(get_db)):
     return db.scalars(select(ProcessType).order_by(ProcessType.sort_order, ProcessType.type_name)).all()
 
 
-def _get_or_create_process_type(type_name: str, db: Session):
-    type_code = "_".join(type_name.lower().split())[:100] or "process"
-    process_type = db.scalar(select(ProcessType).where(ProcessType.type_code == type_code))
-    if process_type:
-        return process_type
-    process_type = ProcessType(type_code=type_code, type_name=type_name, sort_order=0)
-    db.add(process_type)
-    db.flush()
-    return process_type
+@router.get("/{process_event_id}", response_model=ProcessEventDetail)
+def get_process_event(process_event_id: int, db: Session = Depends(get_db)):
+    process = db.scalar(
+        select(ProcessEvent).where(ProcessEvent.process_event_id == process_event_id).options(selectinload(ProcessEvent.process_type_ref))
+    )
+    if not process:
+        raise HTTPException(404, "Process event not found")
+    return {
+        "process_event_id": process.process_event_id,
+        "process_code": process.process_code,
+        "process_type": process.process_type,
+        "status": process.status,
+        "operator_name": process.operator_name,
+        "started_at": process.started_at,
+        "completed_at": process.completed_at,
+        "notes": process.notes,
+        "inputs": _linked_samples(ProcessEventInput, process_event_id, db),
+        "outputs": _linked_samples(ProcessEventOutput, process_event_id, db),
+    }
+
+
+def _output_parent_id(requested_parent_id: int | None, input_ids: list[int]) -> int:
+    """Each output gets exactly one parent from the inputs; pooled processes must say which."""
+    if requested_parent_id is None:
+        if len(input_ids) == 1:
+            return input_ids[0]
+        raise HTTPException(400, "Processes with several inputs must name each output's parent_sample_id")
+    if requested_parent_id not in input_ids:
+        raise HTTPException(400, "An output's parent_sample_id must be one of the process inputs")
+    return requested_parent_id
+
+
+def _linked_samples(link_model, process_event_id: int, db: Session) -> list[Sample]:
+    return db.scalars(
+        select(Sample)
+        .join(link_model, link_model.sample_id == Sample.sample_id)
+        .where(link_model.process_event_id == process_event_id)
+        .options(selectinload(Sample.sample_type_ref))
+        .order_by(Sample.sample_id)
+    ).all()

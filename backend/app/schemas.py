@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 class BatchBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -8,21 +8,33 @@ class BatchBrief(BaseModel):
     batch_code: str
     batch_name: str
 
-class SampleBrief(BaseModel):
+class SampleRef(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     sample_id: int
     sample_code: str
     sample_type: str | None = None
     status: str
 
+class SampleListItem(SampleRef):
+    sample_type_id: int | None = None
+    parent_sample_id: int | None = None
+    batch_id: int | None = None
+    external_sample_id: str | None = None
+    label: str | None = None
+    received_date: datetime | None = None
+    current_quantity: Decimal | None = None
+    quantity_unit: str | None = None
+    storage_location_id: int | None = None
+    legacy_codes: list[str] = []
+
 class BatchDetail(BatchBrief):
     description: str | None = None
     is_active: bool
-    samples: list[SampleBrief] = []
+    samples: list[SampleRef] = []
 
 class BatchSampleImportRow(BaseModel):
+    """One root Sample in a shipping batch. sample_type names a sample type lookup entry."""
     sample_code: str
-    parent_sample_id: int | None = None
     external_sample_id: str | None = None
     sample_type: str | None = None
     source_type: str | None = None
@@ -39,18 +51,16 @@ class BatchSampleImportCreate(BaseModel):
     batch_name: str
     samples: list[BatchSampleImportRow]
 
-class MaterialBrief(BaseModel):
+class SampleTypeBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    material_id: int
-    material_code: str
-    material_type: str
-    status: str
-
-class MaterialTypeBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    material_type_id: int
+    sample_type_id: int
     type_code: str
     type_name: str
+
+class SampleTypeCreate(BaseModel):
+    type_name: str = Field(min_length=1, max_length=150)
+    type_code: str | None = Field(default=None, max_length=100)
+    description: str | None = None
 
 class StorageLocationBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -61,73 +71,173 @@ class StorageLocationBrief(BaseModel):
     location_name: str | None = None
     is_active: bool
 
-class SampleCreate(BaseModel):
-    sample_code: str
-    batch_id: int | None = None
-    parent_sample_id: int | None = None
+class SampleFields(BaseModel):
+    """Values a user enters for a Sample. Nothing is copied from a parent."""
     external_sample_id: str | None = None
-    sample_type: str | None = None
+    sample_type_id: int | None = None
+    label: str | None = None
+    subtype: str | None = None
     source_type: str | None = None
     source_description: str | None = None
     collection_date: datetime | None = None
     received_date: datetime | None = None
-    status: str = "expected"
-    notes: str | None = None
-
-class SampleUpdate(BaseModel):
-    batch_id: int | None = None
-    parent_sample_id: int | None = None
-    external_sample_id: str | None = None
-    sample_type: str | None = None
-    source_type: str | None = None
-    source_description: str | None = None
-    collection_date: datetime | None = None
-    received_date: datetime | None = None
-    status: str | None = None
-    notes: str | None = None
-
-class SampleDetail(SampleBrief):
-    external_sample_id: str | None = None
-    source_type: str | None = None
-    source_description: str | None = None
-    collection_date: datetime | None = None
-    received_date: datetime | None = None
-    notes: str | None = None
-    batch: BatchBrief | None = None
-    parent: SampleBrief | None = None
-    offspring: list[SampleBrief] = []
-    materials: list[MaterialBrief] = []
-
-class MaterialCreate(BaseModel):
-    sample_id: int
-    material_type_id: int
-    parent_material_id: int | None = None
-    material_code: str
-    material_label: str | None = None
-    material_subtype: str | None = None
     current_quantity: Decimal | None = None
     quantity_unit: str | None = None
     concentration: Decimal | None = None
     concentration_unit: str | None = None
     storage_location_id: int | None = None
-    status: str = "available"
     is_consumed: bool = False
     is_disposed: bool = False
     expiration_date: datetime | None = None
     notes: str | None = None
 
-class MaterialUpdate(BaseModel):
-    sample_id: int | None = None
-    storage_location_id: int | None = None
+class SampleCreate(SampleFields):
+    sample_code: str = Field(min_length=1, max_length=100)
+    batch_id: int | None = None
+    parent_sample_id: int | None = None
+    status: str = "expected"
+
+class DerivedSampleCreate(SampleFields):
+    """A child Sample; its parent comes from the route or process, never from the payload."""
+    sample_code: str = Field(min_length=1, max_length=100)
+    status: str = "available"
+
+class SampleUpdate(BaseModel):
+    sample_code: str | None = Field(default=None, min_length=1, max_length=100)
+    batch_id: int | None = None
+    parent_sample_id: int | None = None
+    external_sample_id: str | None = None
+    sample_type_id: int | None = None
+    label: str | None = None
+    subtype: str | None = None
+    source_type: str | None = None
+    source_description: str | None = None
+    collection_date: datetime | None = None
+    received_date: datetime | None = None
+    status: str | None = None
     current_quantity: Decimal | None = None
     quantity_unit: str | None = None
     concentration: Decimal | None = None
     concentration_unit: str | None = None
-    status: str | None = None
+    storage_location_id: int | None = None
     is_consumed: bool | None = None
     is_disposed: bool | None = None
     expiration_date: datetime | None = None
     notes: str | None = None
+    # Recorded on the storage or quantity event this edit creates, not on the Sample.
+    operator_name: str | None = None
+    change_notes: str | None = None
+
+class LegacyIdentifier(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    legacy_material_id: int
+    material_code: str
+    resolution: str
+    migrated_at: datetime
+
+class ProcessEventSummary(BaseModel):
+    process_event_id: int
+    process_code: str
+    process_type: str
+    status: str
+    operator_name: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    role: str
+    inputs: list[SampleRef] = []
+    outputs: list[SampleRef] = []
+
+class AssaySummary(BaseModel):
+    assay_id: int
+    assay_code: str
+    assay_name: str
+    assay_type: str
+    target: str | None = None
+    status: str
+    qc_status: str
+    assay_date: datetime | None = None
+    result_count: int = 0
+
+class StorageEventBrief(BaseModel):
+    storage_event_id: int
+    event_type: str
+    event_date: datetime
+    from_location_id: int | None = None
+    to_location_id: int | None = None
+    from_location_code: str | None = None
+    to_location_code: str | None = None
+    operator_name: str | None = None
+    notes: str | None = None
+
+class QuantityEventBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    quantity_event_id: int
+    event_type: str
+    quantity_change: Decimal
+    quantity_unit: str
+    quantity_before: Decimal | None = None
+    quantity_after: Decimal | None = None
+    related_process_event_id: int | None = None
+    event_date: datetime
+    operator_name: str | None = None
+    notes: str | None = None
+
+class DataFileBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    data_file_id: int
+    assay_id: int | None = None
+    sample_id: int | None = None
+    file_type: str
+    file_name: str
+    file_location: str
+    checksum_sha256: str | None = None
+    notes: str | None = None
+    created_at: datetime
+
+class DataFileCreate(BaseModel):
+    file_type: str = Field(min_length=1, max_length=50)
+    file_name: str = Field(min_length=1, max_length=255)
+    file_location: str = Field(min_length=1, max_length=1000)
+    checksum_sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
+    assay_id: int | None = None
+    notes: str | None = None
+
+class SampleDetail(SampleListItem):
+    subtype: str | None = None
+    source_type: str | None = None
+    source_description: str | None = None
+    collection_date: datetime | None = None
+    concentration: Decimal | None = None
+    concentration_unit: str | None = None
+    is_consumed: bool = False
+    is_disposed: bool = False
+    expiration_date: datetime | None = None
+    notes: str | None = None
+    batch: BatchBrief | None = None
+    parent: SampleRef | None = None
+    children: list[SampleRef] = []
+    storage_location: StorageLocationBrief | None = None
+    legacy_identifiers: list[LegacyIdentifier] = []
+    generated_by_assays: list[AssaySummary] = []
+    process_events: list[ProcessEventSummary] = []
+    assays: list[AssaySummary] = []
+    storage_events: list[StorageEventBrief] = []
+    quantity_events: list[QuantityEventBrief] = []
+    data_files: list[DataFileBrief] = []
+
+class LineageGeneratedBy(BaseModel):
+    kind: str
+    code: str
+    type: str
+
+class SampleLineageNode(SampleRef):
+    generated_by: LineageGeneratedBy | None = None
+    children: list["SampleLineageNode"] = []
+
+class SampleLineage(BaseModel):
+    sample: SampleRef
+    ancestors: list[SampleRef]
+    descendants: list[SampleLineageNode]
 
 class ProcessTypeBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -135,14 +245,17 @@ class ProcessTypeBrief(BaseModel):
     type_code: str
     type_name: str
 
-class ProcessOutputMaterialCreate(MaterialCreate):
+class ProcessOutputSampleCreate(DerivedSampleCreate):
+    # Required when a process has several inputs; it must be one of them.
+    parent_sample_id: int | None = None
     quantity_generated: Decimal | None = None
 
 class ProcessEventCreate(BaseModel):
-    process_code: str
-    process_type: str
-    input_material_ids: list[int]
-    output_materials: list[ProcessOutputMaterialCreate]
+    process_code: str = Field(min_length=1, max_length=100)
+    process_type: str = Field(min_length=1, max_length=150)
+    protocol_id: int | None = None
+    input_sample_ids: list[int]
+    output_samples: list[ProcessOutputSampleCreate]
     quantity_used: Decimal | None = None
     quantity_unit: str | None = None
     operator_name: str | None = None
@@ -151,11 +264,23 @@ class ProcessEventCreate(BaseModel):
     status: str = "completed"
     notes: str | None = None
 
-class AliquotCreate(BaseModel):
+class ProcessEventDetail(BaseModel):
+    process_event_id: int
     process_code: str
-    material_type_id: int
-    aliquot_count: int
-    material_code_prefix: str
+    process_type: str
+    status: str
+    operator_name: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    notes: str | None = None
+    inputs: list[SampleRef] = []
+    outputs: list[SampleRef] = []
+
+class AliquotCreate(BaseModel):
+    process_code: str = Field(min_length=1, max_length=100)
+    aliquot_count: int = Field(ge=1, le=500)
+    sample_code_prefix: str = Field(min_length=1, max_length=90)
+    sample_type_id: int | None = None
     quantity_per_aliquot: Decimal | None = None
     quantity_unit: str | None = None
     storage_location_id: int | None = None
@@ -176,7 +301,7 @@ class AssayResultBrief(BaseModel):
 
 class AssayResultCreate(BaseModel):
     analyte: str | None = None
-    result_name: str
+    result_name: str = Field(min_length=1, max_length=255)
     numeric_value: Decimal | None = None
     text_value: str | None = None
     unit: str | None = None
@@ -184,9 +309,9 @@ class AssayResultCreate(BaseModel):
     qc_status: str = "not_reviewed"
 
 class AssayCreate(BaseModel):
-    assay_instance_code: str
+    assay_instance_code: str = Field(min_length=1, max_length=100)
     assay_name: str | None = None
-    assay_type: str
+    assay_type: str = Field(min_length=1, max_length=100)
     target: str | None = None
     operator_name: str | None = None
     assay_date: datetime | None = None
@@ -194,19 +319,12 @@ class AssayCreate(BaseModel):
     qc_status: str = "not_reviewed"
     notes: str | None = None
 
-class AssayDetail(BaseModel):
-    assay_id: int
-    assay_code: str
-    assay_name: str
-    assay_type: str
-    target: str | None = None
-    material: MaterialBrief
+class AssayUpdate(BaseModel):
     operator_name: str | None = None
     assay_date: datetime | None = None
-    status: str
-    qc_status: str
+    status: str | None = None
+    qc_status: str | None = None
     notes: str | None = None
-    results: list[AssayResultBrief] = []
 
 class AssayBrief(BaseModel):
     assay_id: int
@@ -214,54 +332,17 @@ class AssayBrief(BaseModel):
     assay_name: str
     assay_type: str
     target: str | None = None
-    material: MaterialBrief
+    sample: SampleRef
     operator_name: str | None = None
     assay_date: datetime | None = None
     status: str
     qc_status: str
 
-class MaterialDetail(MaterialBrief):
-    sample_id: int
-    sample: SampleBrief
-    storage_location_id: int | None = None
-    storage_location: StorageLocationBrief | None = None
-    material_subtype: str | None = None
-    material_label: str | None = None
-    current_quantity: Decimal | None = None
-    quantity_unit: str | None = None
-    concentration: Decimal | None = None
-    concentration_unit: str | None = None
-    is_consumed: bool = False
-    is_disposed: bool = False
-    expiration_date: datetime | None = None
+class AssayDetail(AssayBrief):
     notes: str | None = None
-    parent: MaterialBrief | None = None
-    offspring: list[MaterialBrief] = []
-    process_events: list[dict] = []
-    assays: list[dict] = []
-    storage_events: list[dict] = []
-    quantity_events: list[dict] = []
-
-class MaterialLineageProcess(BaseModel):
-    process_event_id: int
-    process_code: str
-    process_type: str
-    status: str
-    operator_name: str | None = None
-    input_materials: list[MaterialBrief] = []
-
-class MaterialLineageNode(BaseModel):
-    material_id: int
-    material_code: str
-    material_type: str
-    status: str
-    generated_by_process: MaterialLineageProcess | None = None
-    assays: list[dict] = []
-    children: list["MaterialLineageNode"] = []
-
-class SampleLineage(BaseModel):
-    sample: SampleBrief
-    materials: list[MaterialLineageNode]
+    results: list[AssayResultBrief] = []
+    output_samples: list[SampleRef] = []
+    data_files: list[DataFileBrief] = []
 
 class StorageLocationCreate(BaseModel):
     parent_location_id: int | None = None

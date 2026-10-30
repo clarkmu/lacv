@@ -8,14 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
-from ..models import Batch, Sample
+from ..models import Batch, Sample, SampleType
+from ..sample_rules import require_unique_sample_code
 from ..schemas import BatchDetail, BatchBrief, BatchSampleImportCreate, BatchSampleImportPreview, BatchSampleImportRow
 
 router = APIRouter(prefix="/batches", tags=["batches"])
 
 SAMPLE_BATCH_COLUMNS = [
     "sample_code",
-    "parent_sample_id",
     "external_sample_id",
     "sample_type",
     "source_type",
@@ -59,12 +59,14 @@ async def preview_sample_batch_import(file: UploadFile = File(...)):
 
 @router.post("/sample-import", response_model=BatchDetail)
 def create_sample_batch(payload: BatchSampleImportCreate, db: Session = Depends(get_db)):
+    """A shipping batch of root Samples. Derived Samples are created later from their parents, not imported."""
     batch_name = payload.batch_name.strip()
     if not batch_name:
         raise HTTPException(400, "Batch name is required")
     if not payload.samples:
         raise HTTPException(400, "At least one sample is required")
 
+    type_ids = _sample_type_ids_by_name(payload.samples, db)
     batch = Batch(batch_code=_next_batch_code(batch_name, db), batch_name=batch_name)
     db.add(batch)
     db.flush()
@@ -77,12 +79,10 @@ def create_sample_batch(payload: BatchSampleImportCreate, db: Session = Depends(
         if sample_code in seen_codes:
             raise HTTPException(400, f"Duplicate sample_code in upload: {sample_code}")
         seen_codes.add(sample_code)
-        if db.scalar(select(Sample.sample_id).where(Sample.sample_code == sample_code)):
-            raise HTTPException(400, f"Sample already exists: {sample_code}")
-        if row.parent_sample_id is not None and not db.get(Sample, row.parent_sample_id):
-            raise HTTPException(404, f"Parent sample not found: {row.parent_sample_id}")
-        sample_data = row.model_dump()
+        require_unique_sample_code(sample_code, db)
+        sample_data = row.model_dump(exclude={"sample_type"})
         sample_data["sample_code"] = sample_code
+        sample_data["sample_type_id"] = type_ids.get((row.sample_type or "").strip().lower())
         db.add(Sample(batch_id=batch.batch_id, **sample_data))
 
     db.commit()
@@ -149,6 +149,18 @@ def _read_sample_rows(file_data: BytesIO) -> list[BatchSampleImportRow]:
         data["status"] = data.get("status") or "expected"
         samples.append(BatchSampleImportRow(**data))
     return samples
+
+def _sample_type_ids_by_name(rows: list[BatchSampleImportRow], db: Session) -> dict[str, int]:
+    """Spreadsheet sample types must name an existing sample type (by name or code)."""
+    lookup = {}
+    for sample_type in db.scalars(select(SampleType).where(SampleType.is_active == True)).all():
+        lookup[sample_type.type_name.strip().lower()] = sample_type.sample_type_id
+        lookup[sample_type.type_code.strip().lower()] = sample_type.sample_type_id
+    unknown = sorted({row.sample_type.strip() for row in rows if row.sample_type and row.sample_type.strip().lower() not in lookup})
+    if unknown:
+        raise HTTPException(400, "Unknown sample type: " + ", ".join(unknown) + ". Create it under sample types first.")
+    return lookup
+
 
 def _clean_cell_value(value):
     if isinstance(value, str):

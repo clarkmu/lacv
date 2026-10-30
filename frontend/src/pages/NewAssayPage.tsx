@@ -1,12 +1,13 @@
 import { FormEvent, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
+import { SampleLink } from './SamplePage'
 
 export function NewAssayPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
-  const materialQuery = useQuery({ queryKey: ['material', id], queryFn: () => api.getMaterial(id) })
+  const sampleQuery = useQuery({ queryKey: ['sample', id], queryFn: () => api.getSample(id) })
   const [assayInstanceCode, setAssayInstanceCode] = useState('')
   const [assayName, setAssayName] = useState('')
   const [assayType, setAssayType] = useState('')
@@ -18,7 +19,7 @@ export function NewAssayPage() {
   const [notes, setNotes] = useState('')
 
   const mutation = useMutation({
-    mutationFn: () => api.createMaterialAssay(Number(id), {
+    mutationFn: () => api.createSampleAssay(Number(id), {
       assay_instance_code: assayInstanceCode,
       assay_name: assayName || null,
       assay_type: assayType,
@@ -29,7 +30,7 @@ export function NewAssayPage() {
       qc_status: qcStatus,
       notes: notes || null,
     }),
-    onSuccess: material => navigate(`/material/${material.material_id}`),
+    onSuccess: assay => navigate(`/assay/${assay.assay_id}`),
   })
 
   function submit(event: FormEvent) {
@@ -37,16 +38,14 @@ export function NewAssayPage() {
     mutation.mutate()
   }
 
-  if (materialQuery.isLoading) return <p>Loading material...</p>
-  if (!materialQuery.data) return <p>Material not found.</p>
-
-  const material = materialQuery.data
+  if (sampleQuery.isLoading) return <p>Loading sample…</p>
+  if (!sampleQuery.data) return <p>Sample not found.</p>
 
   return (
     <form onSubmit={submit} className="max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-6">
-        <div className="text-sm text-slate-500">Material</div>
-        <Link className="text-blue-700 hover:underline" to={`/material/${material.material_id}`}>{material.material_code}</Link>
+        <div className="text-sm text-slate-500">Sample</div>
+        <SampleLink sample={sampleQuery.data} />
         <h1 className="mt-3 text-2xl font-semibold">Create assay</h1>
       </div>
 

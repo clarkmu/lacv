@@ -6,7 +6,7 @@ This repository contains LACV, a lightweight Laboratory Information Management S
 
 The goal is NOT to recreate Senaite or Benchling.
 
-Instead, build a simple, maintainable LIMS focused on sample and material lineage, process tracking, and scientific usability.
+Instead, build a simple, maintainable LIMS focused on sample lineage, process tracking, and scientific usability.
 
 ---
 
@@ -93,9 +93,9 @@ parent_sample_id
 
 Primary entities:
 
-- Projects
+- Batches (shipping batches of root Samples)
 - Samples
-- Materials
+- Sample Types
 - Process Events
 - Assays
 - Assay Results
@@ -103,7 +103,13 @@ Primary entities:
 - Storage Events
 - Data Files
 
-Everything revolves around Samples and Materials.
+Everything revolves around Samples.
+
+Sample is the single canonical physical identity. Every physical laboratory object (an incoming tube, an aliquot, an extract, a library) is a Sample. There is no separate Material entity; inventory fields (quantity, concentration, storage location, consumed/disposed) live on Sample.
+
+Aliquoting and other transformations are process events that create derived Samples. Assays operate on Samples and may produce results, derived Samples, or both.
+
+Legacy Material codes from before Material was folded into Sample are kept in legacy_material_records and remain searchable.
 
 ---
 
@@ -114,10 +120,9 @@ Samples may have
 - one parent sample
 - zero or more child samples
 
-Materials may have
+This is the only physical lineage tree.
 
-- one parent material
-- zero or more child materials
+Shipping batches contain only root Samples; derived Samples have no batch.
 
 Children DO NOT inherit field values.
 
@@ -157,13 +162,15 @@ The Sample page is the central page of the application.
 
 It should display:
 
-- editable sample fields
+- editable sample fields, including quantity, concentration, and storage
 - parent sample
-- child samples
-- materials
-- process history
-- assays
+- child samples and the lineage tree
+- the sample's own process history
+- the sample's own assays
+- storage and quantity history
 - attached files
+
+Show the selected Sample's own activity by default. Do not roll every descendant's assays and processes into the parent's view.
 
 The page should support inline editing wherever practical.
 
@@ -206,7 +213,9 @@ Example:
 
 GET /api/samples/{id}/children
 
-GET /api/samples/{id}/materials
+GET /api/samples/{id}/lineage
+
+POST /api/samples/{id}/aliquots
 
 ---
 

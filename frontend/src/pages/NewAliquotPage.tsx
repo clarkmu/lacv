@@ -1,37 +1,35 @@
 import { FormEvent, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
+import { formatQuantity } from '../format'
+import { SampleLink } from './SamplePage'
+
+const inputClass = 'mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm'
 
 export function NewAliquotPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
-  const materialQuery = useQuery({ queryKey: ['material', id], queryFn: () => api.getMaterial(id) })
-  const materialTypes = useQuery({ queryKey: ['material-types'], queryFn: api.listMaterialTypes })
+  const client = useQueryClient()
+  const parent = useQuery({ queryKey: ['sample', id], queryFn: () => api.getSample(id) })
+  const sampleTypes = useQuery({ queryKey: ['sample-types'], queryFn: api.listSampleTypes })
   const locations = useQuery({ queryKey: ['storage-locations'], queryFn: api.listStorageLocations })
-  const [processCode, setProcessCode] = useState('')
-  const [materialTypeId, setMaterialTypeId] = useState('')
-  const [aliquotCount, setAliquotCount] = useState('3')
-  const [materialCodePrefix, setMaterialCodePrefix] = useState('')
-  const [quantityPerAliquot, setQuantityPerAliquot] = useState('')
-  const [quantityUnit, setQuantityUnit] = useState('')
-  const [storageLocationId, setStorageLocationId] = useState('')
-  const [operatorName, setOperatorName] = useState('')
-  const [notes, setNotes] = useState('')
+  const [values, setValues] = useState<Record<string, string>>({ aliquot_count: '3' })
+  const set = (key: string) => (event: { target: { value: string } }) => setValues(current => ({ ...current, [key]: event.target.value }))
 
   const mutation = useMutation({
-    mutationFn: () => api.createMaterialAliquots(Number(id), {
-      process_code: processCode,
-      material_type_id: Number(materialTypeId),
-      aliquot_count: Number(aliquotCount),
-      material_code_prefix: materialCodePrefix,
-      quantity_per_aliquot: quantityPerAliquot ? Number(quantityPerAliquot) : null,
-      quantity_unit: quantityUnit || null,
-      storage_location_id: storageLocationId ? Number(storageLocationId) : null,
-      operator_name: operatorName || null,
-      notes: notes || null,
+    mutationFn: () => api.createAliquots(Number(id), {
+      process_code: values.process_code,
+      aliquot_count: Number(values.aliquot_count),
+      sample_code_prefix: values.sample_code_prefix,
+      sample_type_id: values.sample_type_id ? Number(values.sample_type_id) : null,
+      quantity_per_aliquot: values.quantity_per_aliquot ? Number(values.quantity_per_aliquot) : null,
+      quantity_unit: values.quantity_unit || null,
+      storage_location_id: values.storage_location_id ? Number(values.storage_location_id) : null,
+      operator_name: values.operator_name || null,
+      notes: values.notes || null,
     }),
-    onSuccess: material => navigate(`/material/${material.material_id}`),
+    onSuccess: sample => { client.setQueryData(['sample', id], sample); client.invalidateQueries({ queryKey: ['sample-lineage', id] }); navigate(`/sample/${id}`) },
   })
 
   function submit(event: FormEvent) {
@@ -39,30 +37,38 @@ export function NewAliquotPage() {
     mutation.mutate()
   }
 
-  if (materialQuery.isLoading) return <p>Loading material...</p>
-  if (!materialQuery.data) return <p>Material not found.</p>
-  const material = materialQuery.data
+  if (parent.isLoading) return <p>Loading sample…</p>
+  if (!parent.data) return <p>Sample not found.</p>
+  const prefix = values.sample_code_prefix || parent.data.sample_code
 
   return (
-    <form onSubmit={submit} className="max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-6">
-        <div className="text-sm text-slate-500">Parent material</div>
-        <Link className="text-blue-700 hover:underline" to={`/material/${material.material_id}`}>{material.material_code}</Link>
-        <h1 className="mt-3 text-2xl font-semibold">Aliquot material</h1>
+    <form onSubmit={submit} className="max-w-3xl rounded border border-slate-200 bg-white p-4">
+      <p className="mb-1 text-sm text-slate-500">Parent <SampleLink sample={parent.data} /> · available {formatQuantity(parent.data.current_quantity, parent.data.quantity_unit) || 'unknown'}</p>
+      <h1 className="text-xl font-semibold">Aliquot</h1>
+      <p className="mt-1 text-sm text-slate-500">Records an aliquoting process and creates one derived sample per aliquot, coded {prefix}-01, {prefix}-02, …</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <label className="text-sm font-medium">Process code<input required autoFocus value={values.process_code ?? ''} onChange={set('process_code')} className={inputClass} /></label>
+        <label className="text-sm font-medium">Number of aliquots<input required type="number" min="1" max="500" value={values.aliquot_count ?? ''} onChange={set('aliquot_count')} className={inputClass} /></label>
+        <label className="text-sm font-medium">Sample code prefix<input required value={values.sample_code_prefix ?? ''} onChange={set('sample_code_prefix')} placeholder={parent.data.sample_code} className={inputClass} /></label>
+        <label className="text-sm font-medium">Aliquot sample type
+          <select value={values.sample_type_id ?? ''} onChange={set('sample_type_id')} className={inputClass}>
+            <option value="">No type</option>
+            {(sampleTypes.data ?? []).map(type => <option key={type.sample_type_id} value={type.sample_type_id}>{type.type_name}</option>)}
+          </select>
+        </label>
+        <label className="text-sm font-medium">Quantity per aliquot<input type="number" step="any" value={values.quantity_per_aliquot ?? ''} onChange={set('quantity_per_aliquot')} className={inputClass} /></label>
+        <label className="text-sm font-medium">Unit<input value={values.quantity_unit ?? ''} onChange={set('quantity_unit')} className={inputClass} /></label>
+        <label className="text-sm font-medium">Storage location
+          <select value={values.storage_location_id ?? ''} onChange={set('storage_location_id')} className={inputClass}>
+            <option value="">No location</option>
+            {(locations.data ?? []).map(location => <option key={location.storage_location_id} value={location.storage_location_id}>{location.location_code} · {location.location_name || location.location_type}</option>)}
+          </select>
+        </label>
+        <label className="text-sm font-medium">Operator<input value={values.operator_name ?? ''} onChange={set('operator_name')} className={inputClass} /></label>
+        <label className="text-sm font-medium sm:col-span-3">Notes<textarea value={values.notes ?? ''} onChange={set('notes')} className={`${inputClass} min-h-16`} /></label>
       </div>
-      <label className="block text-sm font-medium">Process code<input required value={processCode} onChange={event => setProcessCode(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
-      <label className="mt-4 block text-sm font-medium">Output material type<select required value={materialTypeId} onChange={event => setMaterialTypeId(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2"><option value="">Select material type</option>{(materialTypes.data ?? []).map(type => <option key={type.material_type_id} value={type.material_type_id}>{type.type_name}</option>)}</select></label>
-      <label className="mt-4 block text-sm font-medium">Number of aliquots<input required type="number" min="1" value={aliquotCount} onChange={event => setAliquotCount(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
-      <label className="mt-4 block text-sm font-medium">Material code prefix<input required value={materialCodePrefix} onChange={event => setMaterialCodePrefix(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="block text-sm font-medium">Volume per aliquot<input type="number" step="any" value={quantityPerAliquot} onChange={event => setQuantityPerAliquot(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
-        <label className="block text-sm font-medium">Unit<input value={quantityUnit} onChange={event => setQuantityUnit(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
-      </div>
-      <label className="mt-4 block text-sm font-medium">Storage location<select value={storageLocationId} onChange={event => setStorageLocationId(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2"><option value="">No location</option>{(locations.data ?? []).map(location => <option key={location.storage_location_id} value={location.storage_location_id}>{location.location_code} - {location.location_name || location.location_type}</option>)}</select></label>
-      <label className="mt-4 block text-sm font-medium">Operator<input value={operatorName} onChange={event => setOperatorName(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
-      <label className="mt-4 block text-sm font-medium">Notes<textarea value={notes} onChange={event => setNotes(event.target.value)} className="mt-2 min-h-24 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
-      {mutation.error && <p className="mt-4 text-sm text-red-700">{mutation.error.message}</p>}
-      <button disabled={mutation.isPending || !materialTypeId} className="mt-6 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400">{mutation.isPending ? 'Creating...' : 'Create aliquots'}</button>
+      {mutation.error && <p role="alert" className="mt-3 text-sm text-red-700">{mutation.error.message}</p>}
+      <button disabled={mutation.isPending} className="mt-4 rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:bg-slate-400">{mutation.isPending ? 'Saving…' : 'Create aliquots'}</button>
     </form>
   )
 }

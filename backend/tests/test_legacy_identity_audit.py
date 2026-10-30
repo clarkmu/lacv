@@ -1,9 +1,10 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from legacy_identity_audit import AMBIGUOUS, MATCHED, NEW_SAMPLE, classify_materials, read_overrides  # noqa: E402
+from app.legacy_identity import AMBIGUOUS, MATCHED, NEW_SAMPLE, classify_materials  # noqa: E402
+from scripts.legacy_identity_audit import read_overrides  # noqa: E402
 
 
 def sample(sample_id, code, parent=None):
