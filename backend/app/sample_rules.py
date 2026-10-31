@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import LegacyMaterialRecord, ProcessType, Sample, SampleQuantityEvent, SampleType, StorageEvent, StorageLocation
+from .quantity import convert
 from .schemas import DerivedSampleCreate
 
 
@@ -112,10 +113,33 @@ def record_quantity_change(
     ))
 
 
-def consume(sample: Sample, amount: Decimal | None, db: Session, unit: str | None, process_event_id: int, operator_name: str | None, notes: str | None) -> None:
+def consume(
+    sample: Sample,
+    amount: Decimal | None,
+    db: Session,
+    unit: str | None,
+    process_event_id: int | None,
+    operator_name: str | None,
+    notes: str | None,
+    event_type: str = "consumed",
+) -> None:
+    """Record a physical removal from sample, in the sample's own unit."""
     if amount is None or sample.current_quantity is None:
         return
-    record_quantity_change(sample, sample.current_quantity - amount, "consumed", db, unit, process_event_id, operator_name, notes)
+    if amount < 0:
+        raise HTTPException(400, f"The amount removed from {sample.sample_code} cannot be negative")
+    if sample.quantity_unit:
+        converted = convert(amount, unit or sample.quantity_unit, sample.quantity_unit)
+        if converted is None:
+            raise HTTPException(400, f"Cannot remove {amount} {unit} from {sample.sample_code}: its quantity is recorded in {sample.quantity_unit}")
+        amount, unit = converted, sample.quantity_unit
+    if amount > sample.current_quantity:
+        raise HTTPException(400, f"Cannot remove {_amount(amount, unit)} from {sample.sample_code}: only {_amount(sample.current_quantity, sample.quantity_unit)} is recorded")
+    record_quantity_change(sample, sample.current_quantity - amount, event_type, db, unit, process_event_id, operator_name, notes)
+
+
+def _amount(value: Decimal, unit: str | None) -> str:
+    return f"{value.normalize():f} {unit}" if unit else f"{value.normalize():f}"
 
 
 def get_or_create_process_type(type_name: str, db: Session) -> ProcessType:

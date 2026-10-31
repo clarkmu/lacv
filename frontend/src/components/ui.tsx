@@ -29,6 +29,19 @@ export function PageHeader({ title, description, actions }: { title: string; des
   )
 }
 
+/** A titled work area: a header strip with an optional action, then content. */
+export function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="rounded border border-slate-200 bg-white" aria-label={title}>
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        {action}
+      </div>
+      <div className="p-3">{children}</div>
+    </section>
+  )
+}
+
 type Tone = 'positive' | 'pending' | 'negative' | 'retired' | 'neutral'
 
 // Muted tones for statuses the app uses today. Anything else renders in the neutral tone, text unchanged.

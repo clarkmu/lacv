@@ -27,13 +27,15 @@ type SampleFormProps = {
   intro?: ReactNode
   description?: string
   allowBatch?: boolean
+  /** Extra inputs shown after the Sample's own fields. */
+  extraFields?: ReactNode
   onSubmit: (payload: SampleFormPayload) => void
 }
 
 const inputClass = 'mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm'
 
 /** Values for one new Sample. Nothing is pre-filled from a parent. */
-export function SampleForm({ title, submitLabel, defaultStatus, isPending, error, intro, description, allowBatch = false, onSubmit }: SampleFormProps) {
+export function SampleForm({ title, submitLabel, defaultStatus, isPending, error, intro, description, allowBatch = false, extraFields, onSubmit }: SampleFormProps) {
   const sampleTypes = useQuery({ queryKey: ['sample-types'], queryFn: api.listSampleTypes })
   const locations = useQuery({ queryKey: ['storage-locations'], queryFn: api.listStorageLocations })
   const batches = useQuery({ queryKey: ['batches'], queryFn: api.listBatches, enabled: allowBatch })
@@ -96,6 +98,7 @@ export function SampleForm({ title, submitLabel, defaultStatus, isPending, error
         <label className="text-sm font-medium">Concentration unit<input value={values.concentration_unit ?? ''} onChange={set('concentration_unit')} className={inputClass} /></label>
         <label className="text-sm font-medium sm:col-span-3">Notes<textarea value={values.notes ?? ''} onChange={set('notes')} className={`${inputClass} min-h-16`} /></label>
       </div>
+      {extraFields}
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error.message}</p>}
       <button disabled={isPending} className="mt-4 rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:bg-slate-400">{isPending ? 'Saving…' : submitLabel}</button>
     </form>

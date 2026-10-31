@@ -14,6 +14,7 @@ LACV is not intended to recreate a full commercial LIMS such as Senaite or Bench
 - Treats aliquoting as a process: it records the aliquoting event, consumes quantity from the parent, and creates one derived Sample per aliquot.
 - Tracks assays performed on Samples, including type, target, date, operator, status, QC status, and flexible result rows. An assay can also produce derived Samples (for example a sequencing library).
 - Tracks each Sample's current storage location plus its storage movement and quantity history.
+- Shows how much of each Sample remains: starting quantity minus removals from that Sample (process and aliquot inputs, amounts taken to create a child, downward adjustments), from the Sample's own quantity ledger. Using a child never gives quantity back to its parent. If the ledger does not chain from the starting quantity to the current one, or mixes incompatible units, the Sample page says so and shows no percentage.
 - Attaches data file references to Samples and assays.
 - Groups root Samples into shipping batches and imports them from `.xlsx` files through a preview-and-confirm workflow. Derived Samples never belong to a batch.
 - Makes the Sample page the central workspace: editable fields, parent and children, the lineage tree, the Sample's own processes and assays, storage and quantity history, files, and legacy identifiers.

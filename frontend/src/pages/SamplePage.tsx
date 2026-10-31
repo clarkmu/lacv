@@ -3,6 +3,8 @@ import type { KeyboardEvent, ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
+import { availabilityTitle, SampleAvailability } from '../components/SampleAvailability'
+import { Panel } from '../components/ui'
 import { formatDateTime, formatQuantity, toDateTimeInput } from '../format'
 import type { SampleDetail, SampleLineageNode, SampleRef } from '../types'
 
@@ -75,11 +77,16 @@ export function SamplePage() {
       </header>
       {remove.error && <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{remove.error.message}</p>}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <SampleFields sample={sample} />
-        <Panel title="Lineage">
-          {lineage.data ? <LineageTree sample={sample} ancestors={lineage.data.ancestors} descendants={lineage.data.descendants} /> : <Empty>Loading lineage…</Empty>}
-        </Panel>
+        <div className="space-y-4">
+          <Panel title={availabilityTitle(sample.availability)}>
+            <SampleAvailability availability={sample.availability} />
+          </Panel>
+          <Panel title="Lineage">
+            {lineage.data ? <LineageTree sample={sample} ancestors={lineage.data.ancestors} descendants={lineage.data.descendants} /> : <Empty>Loading lineage…</Empty>}
+          </Panel>
+        </div>
       </div>
 
       <Panel title="Child samples" action={<Link to={`/sample/${sample.sample_id}/children/new`} className="text-sm text-blue-700 hover:underline">Add child</Link>}>
@@ -323,18 +330,6 @@ export function SampleLink({ sample }: { sample: SampleRef }) {
 
 function SampleLinks({ samples }: { samples: SampleRef[] }) {
   return <span className="flex flex-wrap gap-x-2">{samples.map(sample => <SampleLink key={sample.sample_id} sample={sample} />)}</span>
-}
-
-function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="rounded border border-slate-200 bg-white" aria-label={title}>
-      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        {action}
-      </div>
-      <div className="p-3">{children}</div>
-    </section>
-  )
 }
 
 function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {

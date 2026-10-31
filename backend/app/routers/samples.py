@@ -9,12 +9,13 @@ from ..models import (
     Assay, AssayDefinition, AssayOutput, AssayResult, Batch, DataFile, LegacyMaterialRecord, ProcessEvent,
     ProcessEventInput, ProcessEventOutput, Sample, SampleQuantityEvent, StorageEvent, StorageLocation,
 )
+from ..quantity import availability
 from ..sample_rules import (
     consume, create_derived_sample, get_or_create_process_type, get_sample_or_404, record_initial_storage,
     record_quantity_change, record_storage_move, require_unique_sample_code, validate_parent, validate_references,
 )
 from ..schemas import (
-    AliquotCreate, AssayCreate, AssayDetail, DataFileCreate, DerivedSampleCreate, SampleCreate, SampleDetail,
+    AliquotCreate, AssayCreate, AssayDetail, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate, SampleDetail,
     SampleLineage, SampleListItem, SampleRef, SampleUpdate,
 )
 from .assays import assay_definition_for, get_assay
@@ -63,6 +64,11 @@ def get_sample(sample_id: int, db: Session = Depends(get_db)):
     if not sample:
         raise HTTPException(404, "Sample not found")
     own_assays = _assays_where(Assay.sample_id == sample_id, db)
+    ledger = db.scalars(
+        select(SampleQuantityEvent)
+        .where(SampleQuantityEvent.sample_id == sample_id)
+        .order_by(SampleQuantityEvent.event_date, SampleQuantityEvent.quantity_event_id)
+    ).all()
     return {
         **{column.key: getattr(sample, column.key) for column in Sample.__table__.columns},
         "sample_type": sample.sample_type,
@@ -78,9 +84,8 @@ def get_sample(sample_id: int, db: Session = Depends(get_db)):
         "process_events": _process_events_for(sample_id, db),
         "assays": _assay_summaries(own_assays, db),
         "storage_events": _storage_events_for(sample_id, db),
-        "quantity_events": db.scalars(
-            select(SampleQuantityEvent).where(SampleQuantityEvent.sample_id == sample_id).order_by(SampleQuantityEvent.event_date.desc())
-        ).all(),
+        "quantity_events": list(reversed(ledger)),
+        "availability": availability(sample.current_quantity, sample.quantity_unit, ledger),
         "data_files": db.scalars(
             select(DataFile)
             .where(or_(DataFile.sample_id == sample_id, DataFile.assay_id.in_([assay.assay_id for assay in own_assays])))
@@ -154,10 +159,15 @@ def create_sample(payload: SampleCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/{parent_id}/children", response_model=SampleDetail, status_code=status.HTTP_201_CREATED)
-def create_child(parent_id: int, payload: DerivedSampleCreate, db: Session = Depends(get_db)):
-    get_sample_or_404(parent_id, db, "Parent sample")
+def create_child(parent_id: int, payload: ChildSampleCreate, db: Session = Depends(get_db)):
+    parent = get_sample_or_404(parent_id, db, "Parent sample")
+    if payload.quantity_taken_from_parent is not None:
+        # The one physical removal for this transfer; the child's own quantity starts its own ledger.
+        consume(parent, payload.quantity_taken_from_parent, db, payload.quantity_taken_unit, None, None,
+                f"Taken to create child sample {payload.sample_code}", event_type="allocated")
     # Intentionally do not inherit any parent properties.
-    child = create_derived_sample(parent_id, payload, db)
+    child_fields = payload.model_dump(exclude={"quantity_taken_from_parent", "quantity_taken_unit"})
+    child = create_derived_sample(parent_id, DerivedSampleCreate(**child_fields), db)
     db.commit()
     return get_sample(child.sample_id, db)
 

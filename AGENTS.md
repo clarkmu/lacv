@@ -168,6 +168,7 @@ It should display:
 - the sample's own process history
 - the sample's own assays
 - storage and quantity history
+- available quantity (starting quantity, remaining, percent remaining), computed in the backend from the Sample's own quantity ledger
 - attached files
 
 Show the selected Sample's own activity by default. Do not roll every descendant's assays and processes into the parent's view.

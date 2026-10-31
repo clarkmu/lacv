@@ -119,6 +119,18 @@ export type LegacyIdentifier = {
   migrated_at: string
 }
 
+export type SampleAvailability = {
+  state: 'tracked' | 'not_recorded' | 'no_unit' | 'unit_mismatch' | 'inconsistent'
+  unit: string | null
+  dimension: 'volume' | 'mass' | null
+  starting_quantity: string | null
+  available_quantity: string | null
+  removed_quantity: string | null
+  added_quantity: string | null
+  percent_remaining: number | null
+  problems: string[]
+}
+
 export type SampleDetail = SampleListItem & {
   subtype: string | null
   source_type: string | null
@@ -141,6 +153,7 @@ export type SampleDetail = SampleListItem & {
   storage_events: StorageEvent[]
   quantity_events: QuantityEvent[]
   data_files: DataFile[]
+  availability: SampleAvailability
 }
 
 export type SampleLineageNode = SampleRef & {

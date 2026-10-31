@@ -275,3 +275,25 @@ Sample page also shows process history (process_events, assay)
     When I perform common workflows around samples, lineage, assays, storage, and files
     Then I can complete those workflows without requiring unused Senaite-style fields
     And the UI remains table-first, dense, and laboratory-focused
+
+41. **Remaining quantity comes from the Sample's own ledger**
+    Given a root sample with 100 uL
+    When I create a child sample and record 20 uL taken from the parent
+    Then the parent shows 80 uL of 100 uL remaining (80%)
+    And the child starts its own ledger at its own quantity
+
+42. **Using a child does not change the parent**
+    Given that child has 20 uL
+    When a process uses 5 uL of the child
+    Then the child shows 15 uL of 20 uL remaining
+    And the parent still shows 80 uL of 100 uL remaining
+
+43. **Removals cannot exceed what is recorded or mix units**
+    Given a sample with 1 mL
+    When 250 uL is taken from it
+    Then it shows 0.75 mL remaining
+    And taking 5 ng, or more than remains, is rejected and nothing is created
+
+44. **Unknown or inconsistent quantities show no percentage**
+    Given a sample with no quantity, no unit, or a ledger that does not match its current quantity
+    Then the Sample page shows what is recorded and why no percentage is shown

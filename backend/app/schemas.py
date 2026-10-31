@@ -102,6 +102,12 @@ class DerivedSampleCreate(SampleFields):
     sample_code: str = Field(min_length=1, max_length=100)
     status: str = "available"
 
+class ChildSampleCreate(DerivedSampleCreate):
+    """A child made directly from its parent. The amount taken, when given, is removed from the parent."""
+    quantity_taken_from_parent: Decimal | None = Field(default=None, gt=0)
+    # Defaults to the parent's quantity unit.
+    quantity_taken_unit: str | None = None
+
 class SampleUpdate(BaseModel):
     sample_code: str | None = Field(default=None, min_length=1, max_length=100)
     batch_id: int | None = None
@@ -202,6 +208,19 @@ class DataFileCreate(BaseModel):
     assay_id: int | None = None
     notes: str | None = None
 
+class SampleAvailability(BaseModel):
+    """How much of a Sample remains, from its own quantity ledger (see app/quantity.py)."""
+    # tracked | not_recorded | no_unit | unit_mismatch | inconsistent
+    state: str
+    unit: str | None = None
+    dimension: str | None = None
+    starting_quantity: Decimal | None = None
+    available_quantity: Decimal | None = None
+    removed_quantity: Decimal | None = None
+    added_quantity: Decimal | None = None
+    percent_remaining: float | None = None
+    problems: list[str] = []
+
 class SampleDetail(SampleListItem):
     subtype: str | None = None
     source_type: str | None = None
@@ -224,6 +243,7 @@ class SampleDetail(SampleListItem):
     storage_events: list[StorageEventBrief] = []
     quantity_events: list[QuantityEventBrief] = []
     data_files: list[DataFileBrief] = []
+    availability: SampleAvailability
 
 class LineageGeneratedBy(BaseModel):
     kind: str
