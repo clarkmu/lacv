@@ -298,6 +298,14 @@ Avoid premature optimization.
 
 Use Tailwind.
 
+Use shadcn/ui as the component foundation, layered like this:
+
+- frontend/src/components/ui/: shadcn primitives (added with the shadcn CLI, then owned and adjusted here)
+- frontend/src/components/common.tsx and frontend/src/components/sample/: LACV components (StatusBadge, SampleTypeLabel, PageHeader, Panel, SampleIdentity, SpecimenState, SampleLineage, SampleActivity, ...)
+- frontend/src/pages/: workflows composed from LACV components
+
+Theme tokens (slate surfaces, indigo accent, IBM Plex Sans/Mono) live in frontend/src/index.css. Do not add a second styling system.
+
 Keep the UI clean.
 
 Avoid decorative gradients.

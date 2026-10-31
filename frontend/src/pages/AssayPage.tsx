@@ -3,9 +3,9 @@ import type { ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import { buttonClass, errorClass, inputClass, Panel, StatusBadge } from '../components/ui'
+import { buttonClass, errorClass, inputClass, Panel, StatusBadge } from '../components/common'
 import { formatDateTime, formatQuantity } from '../format'
-import { SampleLink } from './SamplePage'
+import { SampleLink } from '../components/common'
 
 export function AssayPage() {
   const { id = '' } = useParams()

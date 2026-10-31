@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
-import { SampleLink } from './SamplePage'
+import { SampleLink } from '../components/common'
 
 export function NewAssayPage() {
   const { id = '' } = useParams()

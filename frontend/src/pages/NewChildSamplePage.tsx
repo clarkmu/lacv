@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { SampleForm } from '../components/SampleForm'
 import { formatQuantity } from '../format'
-import { SampleLink } from './SamplePage'
+import { SampleLink } from '../components/common'
 
 export function NewChildSamplePage() {
   const { id = '' } = useParams()

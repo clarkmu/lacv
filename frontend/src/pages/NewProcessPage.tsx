@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { SampleLink } from './SamplePage'
+import { SampleLink } from '../components/common'
 
 const inputClass = 'mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm'
 

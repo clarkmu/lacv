@@ -88,10 +88,12 @@ function listedCodes() {
   return [...container.querySelectorAll('tbody tr')].map(row => row.querySelector('td')?.textContent ?? '').filter(code => code && !code.startsWith('No samples'))
 }
 
+// The control is found through its visible label, as a user (or screen reader) would.
 function baseSamplesOnly() {
-  const checkbox = [...container.querySelectorAll('label')].find(label => label.textContent === 'Base samples only')?.querySelector('input')
+  const label = [...container.querySelectorAll('label')].find(label => label.textContent === 'Base samples only')
+  const checkbox = label && container.querySelector<HTMLButtonElement>(`#${label.htmlFor}[role="checkbox"]`)
   if (!checkbox) throw new Error('Base samples only checkbox not found')
-  return checkbox
+  return { checked: checkbox.getAttribute('aria-checked') === 'true', click: () => checkbox.click() }
 }
 
 async function setBaseSamplesOnly(checked: boolean) {

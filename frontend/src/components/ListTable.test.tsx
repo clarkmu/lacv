@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { ListTable } from './ListTable'
-import { StatusBadge } from './ui'
+import { StatusBadge } from './common'
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean

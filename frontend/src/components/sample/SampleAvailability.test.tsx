@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { availabilityTitle, SampleAvailability } from './SampleAvailability'
-import type { SampleAvailability as Availability } from '../types'
+import type { SampleAvailability as Availability } from '../../types'
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean
