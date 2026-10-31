@@ -16,9 +16,11 @@ type ListTableProps<T> = {
   searchPlaceholder: string
   getRowKey: (row: T) => string | number
   emptyMessage: string
+  /** Extra filter controls shown beside the search field. */
+  filters?: ReactNode
 }
 
-export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, emptyMessage }: ListTableProps<T>) {
+export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, emptyMessage, filters }: ListTableProps<T>) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('')
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
@@ -53,7 +55,10 @@ export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, empt
 
   return (
     <div className="space-y-3">
-      <input value={search} onChange={event => setSearch(event.target.value)} placeholder={searchPlaceholder} className="w-full max-w-md rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <input value={search} onChange={event => setSearch(event.target.value)} placeholder={searchPlaceholder} aria-label="Filter" className="w-full max-w-md rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        {filters}
+      </div>
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-slate-600">

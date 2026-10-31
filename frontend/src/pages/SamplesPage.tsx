@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { ListTable } from '../components/ListTable'
@@ -8,7 +8,13 @@ import type { SampleListItem } from '../types'
 
 export function SamplesPage() {
   const navigate = useNavigate()
-  const { data = [], isLoading, error } = useQuery({ queryKey: ['samples'], queryFn: api.listSamples })
+  const [baseSamplesOnly, setBaseSamplesOnly] = useState(true)
+  // Keep the previous rows while the other list loads so the table (and its search text) stays mounted.
+  const { data = [], isLoading, error } = useQuery({
+    queryKey: ['samples', { rootOnly: baseSamplesOnly }],
+    queryFn: () => api.listSamples({ rootOnly: baseSamplesOnly }),
+    placeholderData: keepPreviousData,
+  })
   const [code, setCode] = useState('')
   const lookup = useMutation({ mutationFn: api.lookupSample, onSuccess: sample => navigate(`/sample/${sample.sample_id}`) })
   const codes = new Map(data.map(sample => [sample.sample_id, sample.sample_code]))
@@ -39,6 +45,12 @@ export function SamplesPage() {
         searchPlaceholder="Filter by code, legacy code, type, status, label, or external ID"
         getRowKey={sample => sample.sample_id}
         emptyMessage="No samples match your filter."
+        filters={
+          <label className="flex items-center gap-1.5 text-sm text-slate-700">
+            <input type="checkbox" checked={baseSamplesOnly} onChange={event => setBaseSamplesOnly(event.target.checked)} className="h-4 w-4" />
+            Base samples only
+          </label>
+        }
         columns={[
           { key: 'sample_code', label: 'Sample', value: sample => sample.sample_code, render: sample => <Link className="font-medium text-blue-700 hover:underline" to={`/sample/${sample.sample_id}`}>{sample.sample_code}</Link> },
           { key: 'sample_type', label: 'Type', value: sample => sample.sample_type },

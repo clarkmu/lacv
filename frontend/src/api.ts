@@ -34,7 +34,7 @@ export const api = {
   previewSampleBatchImport: (file: File) => { const body = new FormData(); body.append('file', file); return request<BatchSampleImportPreview>('/batches/sample-import/preview', { method: 'POST', headers: {}, body }) },
   createSampleBatch: (payload: { batch_name: string; samples: BatchSampleImportRow[] }) => post<BatchDetail>('/batches/sample-import', payload),
 
-  listSamples: () => request<SampleListItem[]>('/samples'),
+  listSamples: (options: { rootOnly?: boolean } = {}) => request<SampleListItem[]>(options.rootOnly ? '/samples?root_only=true' : '/samples'),
   lookupSample: (code: string) => request<SampleRef>(`/samples/lookup?code=${encodeURIComponent(code)}`),
   getSample: (id: string | number) => request<SampleDetail>(`/samples/${id}`),
   getSampleLineage: (id: string | number) => request<SampleLineage>(`/samples/${id}/lineage`),

@@ -292,3 +292,21 @@ def test_validation_errors_are_readable_and_create_nothing(client):
     assert bad_type.status_code == 404 and "Sample type not found" in bad_type.json()["detail"]
     assert blank_code.status_code == 422
     assert client.get("/samples/lookup", params={"code": "S-001"}).status_code == 404
+
+
+def test_root_only_list_excludes_derived_samples(client):
+    root = create_root(client, "BASE-001", label="Field tube", external_sample_id="EXT-9")
+    child = client.post(f"/samples/{root['sample_id']}/children", json={"sample_code": "BASE-001-A", "label": "Field tube aliquot"}).json()
+
+    roots = client.get("/samples", params={"root_only": "true"}).json()
+    everything = client.get("/samples").json()
+
+    assert roots and all(row["parent_sample_id"] is None for row in roots)
+    assert "BASE-001" in {row["sample_code"] for row in roots}
+    assert "BASE-001-A" not in {row["sample_code"] for row in roots}
+    assert {"BASE-001", "BASE-001-A"} <= {row["sample_code"] for row in everything}
+    assert len(everything) == len(roots) + sum(row["parent_sample_id"] is not None for row in everything)
+    assert client.get("/samples", params={"root_only": "false"}).json() == everything
+    # The base-samples filter is for lists only: a derived Sample still opens by code or id.
+    assert lookup(client, "BASE-001-A")["sample_id"] == child["sample_id"]
+    assert client.get(f"/samples/{child['sample_id']}").status_code == 200

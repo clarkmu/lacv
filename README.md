@@ -170,6 +170,13 @@ pip install -r requirements-dev.txt
 LACV_TEST_DATABASE_URL=postgresql+psycopg://lims:lims_dev_password@localhost:5432/postgres pytest
 ```
 
+Frontend tests run in Node with a simulated browser (Vitest and jsdom). They need Node 22.12 or newer:
+
+```bash
+cd frontend
+npm test
+```
+
 Migration tests start from the pre-migration schema and seed data kept in `backend/tests/fixtures/` and run the real Alembic upgrade.
 
 The deployment script has its own tests. They use a throwaway Git origin and a stub `docker`, and run the real `pg_dump`/`pg_restore` against a throwaway database, so they never touch Docker or a deployment:

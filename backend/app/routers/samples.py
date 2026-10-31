@@ -25,8 +25,12 @@ SAMPLE_LOAD_OPTIONS = (selectinload(Sample.sample_type_ref), selectinload(Sample
 
 
 @router.get("", response_model=list[SampleListItem])
-def list_samples(db: Session = Depends(get_db)):
-    return db.scalars(select(Sample).options(*SAMPLE_LOAD_OPTIONS).order_by(Sample.sample_id.desc())).all()
+def list_samples(root_only: bool = False, db: Session = Depends(get_db)):
+    """List Samples, newest first. root_only=true keeps only base Samples (no parent Sample)."""
+    query = select(Sample).options(*SAMPLE_LOAD_OPTIONS).order_by(Sample.sample_id.desc())
+    if root_only:
+        query = query.where(Sample.parent_sample_id.is_(None))
+    return db.scalars(query).all()
 
 
 @router.get("/lookup", response_model=SampleRef)

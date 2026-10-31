@@ -199,6 +199,8 @@ Examples:
 
 GET /api/samples
 
+GET /api/samples?root_only=true (base Samples only: no parent Sample)
+
 GET /api/samples/{id}
 
 POST /api/samples
