@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 const MODULES: { label: string; to: string; prefixes: string[]; icon: LucideIcon }[] = [
   { label: 'Batches', to: '/batches', prefixes: ['/batches', '/batch/'], icon: Boxes },
   { label: 'Samples', to: '/samples', prefixes: ['/samples', '/sample/'], icon: TestTubes },
-  { label: 'Assays', to: '/assays', prefixes: ['/assays', '/assay/'], icon: FlaskConical },
+  { label: 'Assays', to: '/assays', prefixes: ['/assays', '/assay/', '/assay-executions'], icon: FlaskConical },
   { label: 'Storage', to: '/storage-locations', prefixes: ['/storage-locations', '/storage-location/'], icon: Refrigerator },
 ]
 

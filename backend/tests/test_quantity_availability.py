@@ -133,12 +133,23 @@ def test_seed_examples_show_each_case(client):
         "DEMO-ALIQUOTED-01": ("20.000000", "20.000000", 100.0),
         "DEMO-DEPLETED": ("50.000000", "0.000000", 0.0),
         "DEMO-DNA-MASS": ("500.000000", "380.000000", 76.0),
-        "SAMPLE-001-ROOT": ("100.000000", "50.000000", 50.0),
-        "SAMPLE-001-CHILD": ("50.000000", "50.000000", 100.0),
+        # Workflow seed: a 0.1 mL blood tube used up by its extraction, and a swab with 0.2 of 2.5 mL extracted.
+        "PEDS-2026-08-01": ("0.100000", "0.000000", 0.0),
+        "PEDS-2026-08-02": ("2.500000", "2.300000", 92.0),
     }
     for code, (starting, available, percent) in expected.items():
         result = availability_of(client, lookup(client, code)["sample_id"])
         assert (result["state"], result["starting_quantity"], result["available_quantity"], result["percent_remaining"]) == ("tracked", starting, available, percent), code
+
+
+def test_every_seeded_ledger_reconciles(client):
+    states = {}
+    for row in client.get("/samples").json():
+        result = availability_of(client, row["sample_id"])
+        states.setdefault(result["state"], []).append(row["sample_code"])
+
+    assert set(states) <= {"tracked", "not_recorded"}, {state: codes[:5] for state, codes in states.items()}
+    assert len(states["tracked"]) > 200
 
 
 def event(change, before, after, unit="uL"):

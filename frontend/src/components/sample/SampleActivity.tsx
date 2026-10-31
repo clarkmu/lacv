@@ -43,10 +43,10 @@ export function buildActivity(sample: SampleDetail): ActivityItem[] {
       ),
     })),
     ...sample.assays.map(assay => ({
-      key: `assay-${assay.assay_id}`,
+      key: `assay-${assay.execution_id}`,
       kind: 'assay' as const,
       date: assay.assay_date,
-      title: <><Link className="text-primary hover:underline" to={`/assay/${assay.assay_id}`}>{assay.assay_code}</Link> <span className="text-muted-foreground">{assay.assay_type}{assay.target ? ` · ${assay.target}` : ''}</span></>,
+      title: <><Link className="text-primary hover:underline" to={`/assay-executions/${assay.execution_id}`}>{assay.execution_code}</Link> <span className="text-muted-foreground">{assay.assay_name}</span></>,
       detail: <span className="flex flex-wrap items-center gap-1.5"><StatusBadge status={assay.status} />QC <StatusBadge status={assay.qc_status} /><span className="text-muted-foreground">{assay.result_count} {assay.result_count === 1 ? 'result' : 'results'}</span></span>,
     })),
     ...sample.storage_events.map(event => ({

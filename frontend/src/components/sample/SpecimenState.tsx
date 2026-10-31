@@ -40,7 +40,7 @@ export function SpecimenState({ sample }: { sample: SampleDetail }) {
               <SampleLink sample={sample.parent} className="text-[13px]" />
               <p className="text-xs text-muted-foreground">
                 {producedBy ? <>via {producedBy.process_type} <span className="font-mono">{producedBy.process_code}</span></>
-                  : producedByAssay ? <>via assay <Link className="font-mono hover:underline" to={`/assay/${producedByAssay.assay_id}`}>{producedByAssay.assay_code}</Link></>
+                  : producedByAssay ? <>via assay <Link className="font-mono hover:underline" to={`/assay-executions/${producedByAssay.execution_id}`}>{producedByAssay.execution_code}</Link></>
                   : 'Parent sample'}
               </p>
             </div>

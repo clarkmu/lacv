@@ -34,9 +34,9 @@ export function PageHeader({ title, description, actions }: { title: string; des
 }
 
 /** A titled work area: a header strip with an optional action, then content. */
-export function Panel({ title, action, children, className, bodyClassName }: { title: ReactNode; action?: ReactNode; children: ReactNode; className?: string; bodyClassName?: string }) {
+export function Panel({ title, label, action, children, className, bodyClassName }: { title: ReactNode; label?: string; action?: ReactNode; children: ReactNode; className?: string; bodyClassName?: string }) {
   return (
-    <section className={cn('rounded-md border bg-card shadow-xs', className)} aria-label={typeof title === 'string' ? title : undefined}>
+    <section className={cn('rounded-md border bg-card shadow-xs', className)} aria-label={label ?? (typeof title === 'string' ? title : undefined)}>
       <div className="flex min-h-9 items-center justify-between gap-2 border-b px-3 py-1.5">
         <h2 className="text-[13px] font-semibold tracking-tight">{title}</h2>
         {action}

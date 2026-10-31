@@ -8,15 +8,15 @@ LACV is not intended to recreate a full commercial LIMS such as Senaite or Bench
 
 ## What The Platform Does
 
-- Tracks every physical laboratory object as a Sample: accession metadata (external ID, source, collection and received dates), type, label, quantity, concentration, status, storage location, consumed/disposed flags, and notes.
+- Tracks every physical laboratory object as a Sample: accession metadata (subject, external ID, aliquot number, source, collection and received dates), type (the "Material", e.g. Serum or Blood (RNA shield)), label, quantity, concentration, status, storage location, consumed/disposed flags, and notes.
 - Keeps one lineage tree: each Sample has at most one parent Sample and any number of child Samples. Children never inherit field values; only the parent link is set.
 - Records process events that consume input Samples and create derived output Samples (homogenization, extraction, cDNA, library preparation, pooling).
 - Treats aliquoting as a process: it records the aliquoting event, consumes quantity from the parent, and creates one derived Sample per aliquot.
-- Tracks assays performed on Samples, including type, target, date, operator, status, QC status, and flexible result rows. An assay can also produce derived Samples (for example a sequencing library).
+- Defines assays once as reusable procedures (type, target, kit, instrument, typical volume, the results they report) and records each execution on a Sample: date, performed by, volume used, status, QC, and any number of results. An execution can also produce derived Samples (for example a sequencing library). Assay definitions can be created by hand or imported from an `.xlsx` workbook through a preview-and-confirm workflow.
 - Tracks each Sample's current storage location plus its storage movement and quantity history.
-- Shows how much of each Sample remains: starting quantity minus removals from that Sample (process and aliquot inputs, amounts taken to create a child, downward adjustments), from the Sample's own quantity ledger. Using a child never gives quantity back to its parent. If the ledger does not chain from the starting quantity to the current one, or mixes incompatible units, the Sample page says so and shows no percentage.
+- Shows how much of each Sample remains: starting quantity minus removals from that Sample (process and aliquot inputs, amounts taken to create a child, volume used by assay executions, downward adjustments), from the Sample's own quantity ledger. Using a child never gives quantity back to its parent. If the ledger does not chain from the starting quantity to the current one, or mixes incompatible units, the Sample page says so and shows no percentage.
 - Attaches data file references to Samples and assays.
-- Groups root Samples into shipping batches and imports them from `.xlsx` files through a preview-and-confirm workflow. Derived Samples never belong to a batch.
+- Groups root Samples into shipping batches and imports them from `.xlsx` files through a preview-and-confirm workflow. Derived Samples never belong to a batch. The Batch page edits its Samples as a table, row by row or several rows at once, and saves all changes or none.
 - Makes the Sample page the central workspace: editable fields, parent and children, the lineage tree, the Sample's own processes and assays, storage and quantity history, files, and legacy identifiers.
 - Finds a Sample by its code or by a legacy Material code printed on an older label.
 
@@ -27,12 +27,21 @@ LACV is not intended to recreate a full commercial LIMS such as Senaite or Bench
 ```text
 Sample ──parent_sample_id──> Sample            (one parent, many children)
   ├─ Process Event (inputs) ──> derived Sample(s) (outputs)
-  ├─ Assay ──> Assay Result(s)
+  ├─ Assay execution ──> Assay Result(s)      (each execution is of one Assay definition)
   │       └─> derived Sample(s) (assay outputs)
   ├─ Storage Location / Storage Event(s)
   ├─ Quantity Event(s)
   └─ Data File(s)
 ```
+
+```text
+Assay definition (reusable procedure: type, target, kit, instrument, typical volume, results it reports)
+  └─ Assay execution(s), each on one Sample ──> Result(s)
+```
+
+An assay definition (`assay_definitions`) is the procedure, defined once. An execution (`assays` table, "assay execution" in the API and UI) is that procedure performed on one Sample: when, by whom, the volume it used, status and QC. Results (`assay_results`) belong to one execution, and an execution can have several (for example LACV CT and RNase P CT from a duplex qPCR). `assay_runs` (a plate or instrument run grouping executions) exists in the schema but is not used by the UI yet.
+
+`subject_code` is the study subject (participant) a Sample came from: a plain identifier, not a subject registry. `aliquot_number` tells apart the tubes received for one subject's collection of one Material (sample type); within a batch, two such tubes cannot share a number.
 
 Process input/output join tables preserve transformation provenance and support one-to-many splitting and many-to-one pooling. Each output Sample still has exactly one parent: the single input, or the input named explicitly for pooled processes. Shipping batches contain only root Samples.
 
@@ -86,11 +95,14 @@ The React application is a static browser application, so there is no frontend-s
 
 ## Current UI Scope
 
-- Batch list, batch detail, sample batch template download, and `.xlsx` import confirmation of root samples.
+- Batch list with sample counts, sample batch template download, and `.xlsx` import confirmation of root samples.
 - Sample list with filtering, sorting, and open-by-code (including legacy Material codes).
 - Sample workspace: inline field editing (Enter or leaving a field saves, Esc cancels), lineage tree, child samples, process history, assays, storage and quantity history, files, and legacy identifiers.
-- Sample actions: create root sample, add child sample, aliquot, record a process (homogenization, RNA extraction, reverse transcription, library preparation, other), send to assay, delete when nothing depends on the sample.
-- Assay list, assay detail, QC status, result entry, and derived samples produced by an assay.
+- Sample actions: create root sample, add child sample, aliquot, record a process (homogenization, RNA extraction, reverse transcription, library preparation, other), record an assay, delete when nothing depends on the sample.
+- Assays: the list of reusable assay definitions, creating and editing one, importing one from `.xlsx` (template download, preview with every problem listed by sheet and row, then confirm), retiring one, and each assay's executions across Samples.
+- Recording an assay on a Sample: choose an existing assay, date and time, performed by (suggestions from earlier names, or any new name), sample volume used (deducted from the Sample's availability), and the results the assay reports.
+- Assay execution page: the procedure, the Sample and the execution side by side; status and QC; results added, edited in place and removed (QC-accepted results are locked until QC is reopened); derived samples produced.
+- Batch detail: the batch's root samples as an editable table (subject, Material, aliquot number, external ID, dates, quantity, storage, status), with values set on several selected rows at once, aliquot numbering in table order, and one all-or-nothing save.
 - Storage location list, creation, detail, and editing.
 
 ## Deploying On The DGX Spark

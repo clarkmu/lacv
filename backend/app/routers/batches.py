@@ -4,19 +4,23 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from ..database import get_db
-from ..models import Batch, Sample, SampleType
-from ..sample_rules import require_unique_sample_code
-from ..schemas import BatchDetail, BatchBrief, BatchSampleImportCreate, BatchSampleImportPreview, BatchSampleImportRow
+from ..models import Batch, Sample, SampleType, StorageLocation
+from ..sample_rules import apply_sample_changes, require_unique_sample_code
+from ..schemas import (
+    BatchBrief, BatchDetail, BatchListItem, BatchSampleImportCreate, BatchSampleImportPreview, BatchSampleImportRow, BatchSamplesUpdate,
+)
 
 router = APIRouter(prefix="/batches", tags=["batches"])
 
 SAMPLE_BATCH_COLUMNS = [
     "sample_code",
+    "subject_code",
     "external_sample_id",
+    "aliquot_number",
     "sample_type",
     "source_type",
     "source_description",
@@ -26,9 +30,13 @@ SAMPLE_BATCH_COLUMNS = [
     "notes",
 ]
 
-@router.get("", response_model=list[BatchBrief])
+@router.get("", response_model=list[BatchListItem])
 def list_batches(db: Session = Depends(get_db)):
-    return db.scalars(select(Batch).order_by(Batch.batch_id.desc())).all()
+    counts = dict(db.execute(select(Sample.batch_id, func.count()).where(Sample.batch_id.is_not(None)).group_by(Sample.batch_id)).all())
+    return [
+        {**{key: getattr(batch, key) for key in ("batch_id", "batch_code", "batch_name", "description", "is_active")}, "sample_count": counts.get(batch.batch_id, 0)}
+        for batch in db.scalars(select(Batch).order_by(Batch.batch_id.desc())).all()
+    ]
 
 @router.get("/sample-template")
 def download_sample_batch_template():
@@ -120,10 +128,110 @@ async def import_batches(file: UploadFile = File(...), db: Session = Depends(get
 
 @router.get("/{batch_id}", response_model=BatchDetail)
 def get_batch(batch_id: int, db: Session = Depends(get_db)):
-    batch = db.scalar(select(Batch).where(Batch.batch_id == batch_id).options(selectinload(Batch.samples)))
+    batch = db.get(Batch, batch_id)
     if not batch:
         raise HTTPException(404, "Batch not found")
-    return batch
+    child = aliased(Sample)
+    child_counts = (
+        select(child.parent_sample_id, func.count().label("child_count")).group_by(child.parent_sample_id).subquery()
+    )
+    rows = db.execute(
+        select(Sample, StorageLocation.location_code, child_counts.c.child_count)
+        .outerjoin(StorageLocation, StorageLocation.storage_location_id == Sample.storage_location_id)
+        .outerjoin(child_counts, child_counts.c.parent_sample_id == Sample.sample_id)
+        .where(Sample.batch_id == batch_id)
+        .options(selectinload(Sample.sample_type_ref))
+        .order_by(Sample.sample_code)
+    ).all()
+    return {
+        **{key: getattr(batch, key) for key in ("batch_id", "batch_code", "batch_name", "description", "is_active")},
+        "samples": [_batch_sample_row(sample, location_code, child_count or 0) for sample, location_code, child_count in rows],
+    }
+
+
+@router.patch("/{batch_id}/samples", response_model=BatchDetail)
+def update_batch_samples(batch_id: int, payload: BatchSamplesUpdate, db: Session = Depends(get_db)):
+    """Edit several root Samples of a Batch at once. Every change is checked first; if any is refused, nothing is saved."""
+    if not db.get(Batch, batch_id):
+        raise HTTPException(404, "Batch not found")
+    members = {sample.sample_id: sample for sample in db.scalars(select(Sample).where(Sample.batch_id == batch_id)).all()}
+    errors: list[dict] = []
+    planned: list[tuple[Sample, dict]] = []
+    seen: set[int] = set()
+    for index, change in enumerate(payload.changes):
+        data = change.model_dump(exclude_unset=True)
+        sample_id = data.pop("sample_id")
+        sample = members.get(sample_id)
+        if sample is None or sample_id in seen:
+            errors.append(_change_error(index, "sample_id", f"Sample {sample_id} is not in this batch" if sample is None else f"Sample {sample.sample_code} is changed twice"))
+            continue
+        seen.add(sample_id)
+        errors.extend(_reference_errors(index, data, db))
+        planned.append((sample, data))
+    errors.extend(_aliquot_conflicts(members, planned, payload.changes))
+    if errors:
+        raise HTTPException(422, errors)
+    for sample, data in planned:
+        apply_sample_changes(sample, data, db, payload.operator_name, payload.change_notes)
+    db.commit()
+    return get_batch(batch_id, db)
+
+
+def _batch_sample_row(sample: Sample, location_code: str | None, child_count: int) -> dict:
+    return {
+        **{key: getattr(sample, key) for key in (
+            "sample_id", "sample_code", "subject_code", "external_sample_id", "sample_type_id", "aliquot_number", "collection_date",
+            "received_date", "status", "current_quantity", "quantity_unit", "storage_location_id",
+        )},
+        "sample_type": sample.sample_type,
+        "storage_location_code": location_code,
+        "child_count": child_count,
+    }
+
+
+def _change_error(index: int, field: str, message: str) -> dict:
+    return {"loc": ["body", "changes", index, field], "msg": message, "type": "value_error"}
+
+
+def _reference_errors(index: int, data: dict, db: Session) -> list[dict]:
+    errors = []
+    if "status" in data and not data["status"]:
+        errors.append(_change_error(index, "status", "Status cannot be blank"))
+    if data.get("sample_type_id") is not None and not db.get(SampleType, data["sample_type_id"]):
+        errors.append(_change_error(index, "sample_type_id", f"Sample type not found: {data['sample_type_id']}"))
+    if data.get("storage_location_id") is not None and not db.get(StorageLocation, data["storage_location_id"]):
+        errors.append(_change_error(index, "storage_location_id", f"Storage location not found: {data['storage_location_id']}"))
+    return errors
+
+
+def _aliquot_conflicts(members: dict[int, Sample], planned: list[tuple[Sample, dict]], changes) -> list[dict]:
+    """Aliquot numbers tell apart the tubes of one subject's collection of one Material, so two such tubes cannot share a number.
+
+    Checked on the Batch as it would be after the changes. Tubes without a subject or an aliquot number are not compared.
+    """
+    change_index = {sample.sample_id: index for index, (sample, _) in enumerate(planned)}
+    planned_data = {sample.sample_id: data for sample, data in planned}
+    holders: dict[tuple, list[Sample]] = {}
+    for sample in sorted(members.values(), key=lambda member: member.sample_code):
+        final = {**{key: getattr(sample, key) for key in ("subject_code", "sample_type_id", "collection_date", "aliquot_number")}, **planned_data.get(sample.sample_id, {})}
+        if not final["subject_code"] or final["aliquot_number"] is None:
+            continue
+        collected = final["collection_date"].date() if final["collection_date"] else None
+        key = (final["subject_code"].lower(), final["sample_type_id"], collected, final["aliquot_number"])
+        holders.setdefault(key, []).append(sample)
+    errors = []
+    for (_, _, collected, number), samples in holders.items():
+        if len(samples) < 2:
+            continue
+        for sample in samples:
+            if sample.sample_id not in change_index:
+                continue
+            others = ", ".join(other.sample_code for other in samples if other is not sample)
+            index = next(i for i, change in enumerate(changes) if change.sample_id == sample.sample_id)
+            when = f" collected {collected.isoformat()}" if collected else ""
+            errors.append(_change_error(index, "aliquot_number", f"Aliquot {number} is also {others}: same subject and Material{when}"))
+    return errors
+
 
 def _read_sample_rows(file_data: BytesIO) -> list[BatchSampleImportRow]:
     try:

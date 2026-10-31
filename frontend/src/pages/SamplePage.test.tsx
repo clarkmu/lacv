@@ -22,7 +22,7 @@ Element.prototype.hasPointerCapture ??= () => false
 const ref = (sample_id: number, sample_code: string) => ({ sample_id, sample_code, sample_type: 'RNA', status: 'available' })
 
 const SAMPLE: SampleDetail = {
-  ...ref(2, 'S-001-RNA'), sample_type_id: 3, parent_sample_id: 1, batch_id: null, external_sample_id: 'EXT-9', label: 'Extracted RNA',
+  ...ref(2, 'S-001-RNA'), sample_type_id: 3, parent_sample_id: 1, batch_id: null, external_sample_id: 'EXT-9', subject_code: null, aliquot_number: null, label: 'Extracted RNA',
   received_date: null, current_quantity: '15.000000', quantity_unit: 'uL', storage_location_id: 7, legacy_codes: ['MAT-0002'],
   subtype: null, source_type: null, source_description: null, collection_date: null, concentration: '12.500000', concentration_unit: 'ng/uL',
   is_consumed: false, is_disposed: false, expiration_date: null, notes: null, batch: null,
@@ -33,7 +33,7 @@ const SAMPLE: SampleDetail = {
     { process_event_id: 10, process_code: 'EXT-1', process_type: 'RNA extraction', status: 'completed', operator_name: 'Ana', started_at: '2026-10-01T09:00:00', completed_at: null, role: 'output', inputs: [ref(1, 'S-001')], outputs: [ref(2, 'S-001-RNA')] },
   ],
   assays: [
-    { assay_id: 20, assay_code: 'QPCR-1', assay_name: 'qPCR', assay_type: 'qPCR', target: 'Gene X', status: 'completed', qc_status: 'accepted', assay_date: '2026-10-03T10:00:00', result_count: 2 },
+    { execution_id: 20, execution_code: 'QPCR-1', assay_definition_id: 4, assay_name: 'qPCR', assay_type: 'qPCR', target: 'Gene X', status: 'completed', qc_status: 'accepted', assay_date: '2026-10-03T10:00:00', result_count: 2 },
   ],
   storage_events: [
     { storage_event_id: 30, event_type: 'stored', event_date: '2026-10-01T09:30:00', from_location_id: null, to_location_id: 7, from_location_code: null, to_location_code: 'BOX-7', operator_name: null, notes: null },

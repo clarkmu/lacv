@@ -1,4 +1,8 @@
-import type { AssayBrief, AssayDefinition, AssayDetail, BatchBrief, BatchDetail, BatchSampleImportPreview, BatchSampleImportRow, ProcessEventDetail, SampleDetail, SampleLineage, SampleListItem, SampleRef, SampleType, StorageLocation } from './types'
+import type {
+  AssayDefinitionDetail, AssayDefinitionDraft, AssayDefinitionListItem, AssayExecution, AssayExecutionDetail, AssayImportPreview, BatchDetail,
+  BatchListItem, BatchSampleImportPreview, BatchSampleImportRow, ProcessEventDetail, SampleDetail, SampleLineage, SampleListItem, SampleRef, SampleType,
+  StorageLocation,
+} from './types'
 
 const API = '/api'
 
@@ -28,9 +32,18 @@ async function readError(response: Response) {
   try {
     const body = JSON.parse(text)
     if (typeof body.detail === 'string') return new ApiError(body.detail)
+    if (body.detail && typeof body.detail.message === 'string') {
+      return new ApiError([body.detail.message, ...(body.detail.problems ?? [])].join('. '))
+    }
     if (Array.isArray(body.detail)) {
       const items = body.detail as { loc?: (string | number)[]; msg: string }[]
-      const fieldErrors = Object.fromEntries(items.filter(item => item.loc && item.loc.length > 1).map(item => [String(item.loc!.at(-1)), item.msg.replace(/^Value error, /, '')]))
+      // Keyed by the field name, and also by its full path (e.g. "changes.2.aliquot_number") for errors about one row of a list.
+      const fieldErrors: Record<string, string> = {}
+      for (const item of items.filter(item => item.loc && item.loc.length > 1)) {
+        const message = item.msg.replace(/^Value error, /, '')
+        fieldErrors[String(item.loc!.at(-1))] ??= message
+        fieldErrors[item.loc!.slice(1).join('.')] = message
+      }
       return new ApiError(items.map(item => `${item.loc?.slice(1).join('.') || 'request'}: ${item.msg}`).join('; '), fieldErrors)
     }
   } catch {
@@ -39,12 +52,19 @@ async function readError(response: Response) {
   return new ApiError(text || response.statusText)
 }
 
+function formWith(file: File) {
+  const body = new FormData()
+  body.append('file', file)
+  return body
+}
+
 const post = <T>(path: string, payload: unknown) => request<T>(path, { method: 'POST', body: JSON.stringify(payload) })
 const patch = <T>(path: string, payload: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(payload) })
 
 export const api = {
-  listBatches: () => request<BatchBrief[]>('/batches'),
+  listBatches: () => request<BatchListItem[]>('/batches'),
   getBatch: (id: string | number) => request<BatchDetail>(`/batches/${id}`),
+  updateBatchSamples: (batchId: number, payload: { changes: Record<string, unknown>[]; operator_name?: string | null; change_notes?: string | null }) => patch<BatchDetail>(`/batches/${batchId}/samples`, payload),
   previewSampleBatchImport: (file: File) => { const body = new FormData(); body.append('file', file); return request<BatchSampleImportPreview>('/batches/sample-import/preview', { method: 'POST', headers: {}, body }) },
   createSampleBatch: (payload: { batch_name: string; samples: BatchSampleImportRow[] }) => post<BatchDetail>('/batches/sample-import', payload),
 
@@ -57,7 +77,7 @@ export const api = {
   updateSample: (id: number, changes: Record<string, unknown>) => patch<SampleDetail>(`/samples/${id}`, changes),
   deleteSample: (id: number) => request<void>(`/samples/${id}`, { method: 'DELETE' }),
   createAliquots: (sampleId: number, payload: Record<string, unknown>) => post<SampleDetail>(`/samples/${sampleId}/aliquots`, payload),
-  createSampleAssay: (sampleId: number, payload: Record<string, unknown>) => post<AssayDetail>(`/samples/${sampleId}/assays`, payload),
+  recordAssayExecution: (sampleId: number, payload: Record<string, unknown>) => post<AssayExecutionDetail>(`/samples/${sampleId}/assay-executions`, payload),
   attachDataFile: (sampleId: number, payload: Record<string, unknown>) => post<SampleDetail>(`/samples/${sampleId}/data-files`, payload),
 
   listSampleTypes: () => request<SampleType[]>('/sample-types'),
@@ -65,13 +85,21 @@ export const api = {
 
   createProcessEvent: (payload: Record<string, unknown>) => post<ProcessEventDetail>('/process-events', payload),
 
-  listAssays: () => request<AssayBrief[]>('/assays'),
-  listAssayDefinitions: () => request<AssayDefinition[]>('/assays/definitions'),
-  listPerformedBy: () => request<string[]>('/assays/performed-by'),
-  getAssay: (id: string | number) => request<AssayDetail>(`/assays/${id}`),
-  updateAssay: (id: number, changes: Record<string, unknown>) => patch<AssayDetail>(`/assays/${id}`, changes),
-  createAssayResult: (assayId: number, payload: Record<string, unknown>) => post<AssayDetail>(`/assays/${assayId}/results`, payload),
-  createAssayOutputSample: (assayId: number, payload: Record<string, unknown>) => post<AssayDetail>(`/assays/${assayId}/output-samples`, payload),
+  listAssayDefinitions: (options: { activeOnly?: boolean } = {}) => request<AssayDefinitionListItem[]>(options.activeOnly ? '/assay-definitions?active_only=true' : '/assay-definitions'),
+  getAssayDefinition: (id: string | number) => request<AssayDefinitionDetail>(`/assay-definitions/${id}`),
+  createAssayDefinition: (payload: AssayDefinitionDraft) => post<AssayDefinitionDetail>('/assay-definitions', payload),
+  updateAssayDefinition: (id: number, changes: Partial<AssayDefinitionDraft> & { is_active?: boolean }) => patch<AssayDefinitionDetail>(`/assay-definitions/${id}`, changes),
+  previewAssayImport: (file: File) => request<AssayImportPreview>('/assay-definitions/import/preview', { method: 'POST', headers: {}, body: formWith(file) }),
+  importAssayDefinition: (file: File) => request<AssayDefinitionDetail>('/assay-definitions/import', { method: 'POST', headers: {}, body: formWith(file) }),
+
+  listAssayExecutions: () => request<AssayExecution[]>('/assay-executions'),
+  listPerformedBy: () => request<string[]>('/assay-executions/performed-by'),
+  getAssayExecution: (id: string | number) => request<AssayExecutionDetail>(`/assay-executions/${id}`),
+  updateAssayExecution: (id: number, changes: Record<string, unknown>) => patch<AssayExecutionDetail>(`/assay-executions/${id}`, changes),
+  createAssayResult: (executionId: number, payload: Record<string, unknown>) => post<AssayExecutionDetail>(`/assay-executions/${executionId}/results`, payload),
+  updateAssayResult: (executionId: number, resultId: number, changes: Record<string, unknown>) => patch<AssayExecutionDetail>(`/assay-executions/${executionId}/results/${resultId}`, changes),
+  deleteAssayResult: (executionId: number, resultId: number) => request<AssayExecutionDetail>(`/assay-executions/${executionId}/results/${resultId}`, { method: 'DELETE' }),
+  createAssayOutputSample: (executionId: number, payload: Record<string, unknown>) => post<AssayExecutionDetail>(`/assay-executions/${executionId}/output-samples`, payload),
 
   listStorageLocations: () => request<StorageLocation[]>('/storage-locations'),
   getStorageLocation: (id: string | number) => request<StorageLocation>(`/storage-locations/${id}`),

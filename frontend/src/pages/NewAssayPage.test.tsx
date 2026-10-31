@@ -17,19 +17,34 @@ const SAMPLE = {
   availability: { state: 'tracked', unit: 'uL', dimension: 'volume', starting_quantity: '100.000000', available_quantity: '100.000000', removed_quantity: '0', added_quantity: '0', percent_remaining: 100, problems: [] },
 }
 
+const DEFINITIONS = [
+  {
+    assay_definition_id: 3, assay_code: 'LACV-RNASEP-DUPLEX', assay_name: 'LACV / RNase P duplex', assay_type: 'qPCR', target: 'LACV, RNase P',
+    kit: 'TaqPath', instrument: 'QuantStudio 5', typical_volume: '5.000000', typical_volume_unit: 'uL', is_active: true, execution_count: 4, sample_count: 4, last_performed: null,
+    expected_results: [
+      { analyte: 'LACV', result_name: 'CT', unit: 'cycles', value_type: 'either' },
+      { analyte: 'RNase P', result_name: 'CT', unit: 'cycles', value_type: 'numeric' },
+    ],
+  },
+  {
+    assay_definition_id: 4, assay_code: 'RNA-QUBIT', assay_name: 'RNA quantification', assay_type: 'Quantification', target: 'RNA',
+    kit: null, instrument: null, typical_volume: null, typical_volume_unit: null, is_active: true, execution_count: 0, sample_count: 0, last_performed: null, expected_results: [],
+  },
+]
+
 let posts: Record<string, unknown>[] = []
 let respond: (body: Record<string, unknown>) => Promise<Response>
 
 function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
   const url = new URL(String(input), 'http://lacv.test')
-  if (init?.method === 'POST' && url.pathname === '/api/samples/5/assays') {
+  if (init?.method === 'POST' && url.pathname === '/api/samples/5/assay-executions') {
     const body = JSON.parse(String(init.body))
     posts.push(body)
     return respond(body)
   }
   if (url.pathname === '/api/samples/5') return Promise.resolve(Response.json(SAMPLE))
-  if (url.pathname === '/api/assays/definitions') return Promise.resolve(Response.json([]))
-  if (url.pathname === '/api/assays/performed-by') return Promise.resolve(Response.json(['Michael Clark', 'M. Clark', 'Jane Doe']))
+  if (url.pathname === '/api/assay-definitions' && url.searchParams.get('active_only') === 'true') return Promise.resolve(Response.json(DEFINITIONS))
+  if (url.pathname === '/api/assay-executions/performed-by') return Promise.resolve(Response.json(['Michael Clark', 'M. Clark', 'Jane Doe']))
   return Promise.resolve(Response.json({ detail: 'Not found' }, { status: 404 }))
 }
 
@@ -42,7 +57,7 @@ let root: Root
 
 beforeEach(async () => {
   posts = []
-  respond = () => Promise.resolve(Response.json({ assay_id: 77 }, { status: 201 }))
+  respond = () => Promise.resolve(Response.json({ execution_id: 77, assay_definition_id: 3 }, { status: 201 }))
   vi.stubGlobal('fetch', vi.fn(fakeFetch))
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -58,7 +73,7 @@ beforeEach(async () => {
       </MemoryRouter>
     </QueryClientProvider>,
   ))
-  await waitFor(() => container.querySelector('#assay-type') !== null)
+  await waitFor(() => container.querySelectorAll('#assay-definition option').length === 3)
 })
 
 afterEach(() => {
@@ -89,10 +104,18 @@ async function fill(selector: string, text: string) {
 
 const submitButton = () => [...container.querySelectorAll<HTMLButtonElement>('button[type="submit"]')].find(button => /Record/.test(button.textContent ?? ''))!
 
-async function fillAssay() {
-  await fill('#assay-type', 'qPCR')
-  await fill('#assay-target', 'LACV')
-  await fill('#assay-name', 'LACV screening')
+async function choose(value: string) {
+  const select = field('#assay-definition') as unknown as HTMLSelectElement
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, value)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+}
+
+const byLabel = (label: string) => container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+
+async function fillAssay(definition = '4') {
+  await choose(definition)
   await fill('#assay-date', '2026-10-30')
   await fill('#assay-time', '14:05')
 }
@@ -104,6 +127,18 @@ test('the page is about one Sample and shows how much of it is available', () =>
   expect(container.textContent).toContain('100 uL available')
   expect(container.textContent).toContain('Mosquito pool')
   expect(container.textContent).not.toMatch(/Assay code|QC status/)
+  expect(container.querySelector('#assay-type'), 'an assay is chosen, not typed in').toBeNull()
+  expect(container.querySelector('a[href="/assays/new"]')?.textContent).toContain('Define a new assay')
+})
+
+test('choosing an assay lays out its results and suggests its typical volume', async () => {
+  await choose('3')
+
+  expect(field('#volume-used').value).toBe('5')
+  expect(container.textContent).toContain('Typical for this assay: 5 uL')
+  expect(byLabel('LACV CT value')).toBeTruthy()
+  expect(byLabel('RNase P CT value')).toBeTruthy()
+  expect(container.textContent).toContain('TaqPath')
 })
 
 test('recording sends the workflow values and lands on the new assay', async () => {
@@ -118,10 +153,26 @@ test('recording sends the workflow values and lands on the new assay', async () 
   await waitFor(() => container.querySelector('[data-testid="landed"]') !== null)
 
   expect(posts).toEqual([{
-    assay_type: 'qPCR', target: 'LACV', assay_name: 'LACV screening', assay_date: '2026-10-30T14:05',
-    operator_name: 'Michael Clark', volume_used: '20', volume_unit: 'uL', notes: 'Plate 3',
+    assay_definition_id: 4, assay_date: '2026-10-30T14:05',
+    operator_name: 'Michael Clark', volume_used: '20', volume_unit: 'uL', notes: 'Plate 3', results: [],
   }])
-  expect(container.textContent).toBe('/assay/77')
+  expect(container.textContent).toBe('/assay-executions/77')
+})
+
+test('results typed on the form are sent with the execution; blank ones are left for later', async () => {
+  await fillAssay('3')
+  await fill('[aria-label="LACV CT value"]', 'not detected')
+  await fill('[aria-label="LACV CT interpretation"]', 'negative')
+  await fill('[aria-label="RNase P CT value"]', '26.4')
+
+  await act(async () => submitButton().click())
+  await waitFor(() => posts.length === 1)
+
+  expect(posts[0].results).toEqual([
+    { analyte: 'LACV', result_name: 'CT', numeric_value: null, text_value: 'not detected', unit: 'cycles', interpretation: 'negative', qc_status: 'not_reviewed' },
+    { analyte: 'RNase P', result_name: 'CT', numeric_value: '26.4', text_value: null, unit: 'cycles', interpretation: null, qc_status: 'not_reviewed' },
+  ])
+  expect(posts[0].volume_used).toBe('5')
 })
 
 test('a person not in the suggestions is submitted as typed', async () => {
@@ -151,7 +202,7 @@ test('a refused volume is explained next to the volume field and nothing navigat
 
 test('the record button cannot send the assay twice', async () => {
   let release: () => void = () => {}
-  respond = () => new Promise(resolve => { release = () => resolve(Response.json({ assay_id: 77 }, { status: 201 })) })
+  respond = () => new Promise(resolve => { release = () => resolve(Response.json({ execution_id: 77, assay_definition_id: 4 }, { status: 201 })) })
   await fillAssay()
 
   // Two clicks before React has re-rendered, as a fast double click would be.

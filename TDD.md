@@ -297,3 +297,27 @@ Sample page also shows process history (process_events, assay)
 44. **Unknown or inconsistent quantities show no percentage**
     Given a sample with no quantity, no unit, or a ledger that does not match its current quantity
     Then the Sample page shows what is recorded and why no percentage is shown
+
+45. **An assay is defined once and run on many Samples**
+    Given an assay "LACV qPCR (SYBR Green)" with kit, instrument and a CT result
+    When I record it on three different Samples
+    Then the assay's page lists three executions on three Samples
+    And no execution created a new assay
+
+46. **One execution reports several results**
+    Given a duplex assay that reports LACV CT and RNase P CT
+    When I record it on a Sample with "not detected" and 26.4
+    Then the execution shows both results, one as text and one as a number
+    And I can add, correct, or remove a result until its QC is accepted
+
+47. **An assay is imported from a workbook only after a preview**
+    Given an .xlsx workbook with an Assay sheet and a Results sheet
+    When I upload it
+    Then I see the assay it would create, or every problem by sheet and row
+    And nothing is created until I confirm, and a workbook with problems cannot be confirmed
+
+48. **A batch is edited as a table**
+    Given a batch of 18 hospital tubes from 6 subjects
+    When I set Material on 4 selected rows and number another subject's tubes 1 to 3
+    Then one save changes exactly those Samples
+    And giving two tubes of the same subject, Material and collection the same aliquot number is refused with nothing saved

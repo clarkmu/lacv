@@ -57,6 +57,10 @@ class Sample(Base):
     parent_sample_id: Mapped[int | None] = mapped_column(ForeignKey("samples.sample_id"))
     sample_code: Mapped[str] = mapped_column(String(100), unique=True)
     external_sample_id: Mapped[str | None] = mapped_column(String(100))
+    # The study subject (participant); a plain identifier.
+    subject_code: Mapped[str | None] = mapped_column(String(100))
+    # Which tube among those received for the same subject, sample type and collection.
+    aliquot_number: Mapped[int | None] = mapped_column()
     sample_type_id: Mapped[int | None] = mapped_column(ForeignKey("sample_types.sample_type_id"))
     label: Mapped[str | None] = mapped_column(String(255))
     subtype: Mapped[str | None] = mapped_column(String(100))
@@ -155,12 +159,43 @@ class SampleQuantityEvent(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
 class AssayDefinition(Base):
+    """A reusable assay procedure. Each Assay row is one execution of it on one Sample."""
     __tablename__ = "assay_definitions"
     assay_definition_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     assay_code: Mapped[str] = mapped_column(String(100), unique=True)
     assay_name: Mapped[str] = mapped_column(String(255))
     assay_type: Mapped[str] = mapped_column(String(100))
     target: Mapped[str | None] = mapped_column(String(255))
+    protocol_id: Mapped[int | None] = mapped_column(ForeignKey("protocols.protocol_id"))
+    description: Mapped[str | None] = mapped_column(Text)
+    kit: Mapped[str | None] = mapped_column(String(255))
+    instrument: Mapped[str | None] = mapped_column(String(255))
+    typical_volume: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
+    typical_volume_unit: Mapped[str | None] = mapped_column(String(50))
+    source_file_name: Mapped[str | None] = mapped_column(String(255))
+    source_sha256: Mapped[str | None] = mapped_column(String(64))
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP"))
+
+    expected_results: Mapped[list[AssayDefinitionResult]] = relationship(
+        back_populates="definition", cascade="all, delete-orphan",
+        order_by="(AssayDefinitionResult.sort_order, AssayDefinitionResult.assay_definition_result_id)",
+    )
+
+class AssayDefinitionResult(Base):
+    """A result an execution of the assay reports, e.g. "CT" for analyte "LACV"."""
+    __tablename__ = "assay_definition_results"
+    assay_definition_result_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    assay_definition_id: Mapped[int] = mapped_column(ForeignKey("assay_definitions.assay_definition_id"))
+    analyte: Mapped[str | None] = mapped_column(String(255))
+    result_name: Mapped[str] = mapped_column(String(255))
+    unit: Mapped[str | None] = mapped_column(String(50))
+    # numeric | text | either
+    value_type: Mapped[str] = mapped_column(String(20), default="either")
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+    definition: Mapped[AssayDefinition] = relationship(back_populates="expected_results")
 
 class AssayRun(Base):
     __tablename__ = "assay_runs"
@@ -168,6 +203,7 @@ class AssayRun(Base):
     run_code: Mapped[str] = mapped_column(String(100), unique=True)
 
 class Assay(Base):
+    """One execution of an assay definition on one Sample ("assay execution" in the API and UI)."""
     __tablename__ = "assays"
     assay_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     assay_instance_code: Mapped[str] = mapped_column(String(100), unique=True)

@@ -23,7 +23,8 @@ export function BatchesPage() {
       columns={[
         { key: 'batch_code', label: 'Batch', value: batch => batch.batch_code, render: batch => <Link className="font-medium text-blue-700 hover:underline" to={`/batch/${batch.batch_id}`}>{batch.batch_code}</Link> },
         { key: 'batch_name', label: 'Name', value: batch => batch.batch_name },
-        { key: 'is_active', label: 'Active', value: () => true },
+        { key: 'sample_count', label: 'Root samples', numeric: true, value: batch => batch.sample_count },
+        { key: 'description', label: 'Description', value: batch => batch.description },
       ]}
     />}
   </section>

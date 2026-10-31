@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import LegacyMaterialRecord, ProcessType, Sample, SampleQuantityEvent, SampleType, StorageEvent, StorageLocation
+from .models import Batch, LegacyMaterialRecord, ProcessType, Sample, SampleQuantityEvent, SampleType, StorageEvent, StorageLocation
 from .quantity import convert
 from .schemas import DerivedSampleCreate
 
@@ -53,6 +53,25 @@ def validate_parent(sample: Sample | None, parent_id: int | None, batch_id: int 
         if ancestor.sample_id == sample.sample_id:
             raise HTTPException(400, "A sample cannot be its own parent or descend from itself")
         ancestor = ancestor.parent
+
+
+def apply_sample_changes(sample: Sample, data: dict, db: Session, operator_name: str | None = None, change_notes: str | None = None) -> None:
+    """Validate and apply edits to one Sample. Storage moves and quantity edits get their history rows."""
+    if "sample_code" in data:
+        require_unique_sample_code(data["sample_code"], db, sample.sample_id)
+    validate_references(data, db)
+    if "parent_sample_id" in data or "batch_id" in data:
+        next_parent = data.get("parent_sample_id", sample.parent_sample_id)
+        next_batch = data.get("batch_id", sample.batch_id)
+        validate_parent(sample, next_parent, next_batch, db)
+        if next_batch is not None and not db.get(Batch, next_batch):
+            raise HTTPException(404, f"Batch not found: {next_batch}")
+    if "storage_location_id" in data and data["storage_location_id"] != sample.storage_location_id:
+        record_storage_move(sample, sample.storage_location_id, data["storage_location_id"], db, operator_name, change_notes)
+    if "current_quantity" in data and data["current_quantity"] != sample.current_quantity:
+        record_quantity_change(sample, data["current_quantity"], "adjusted", db, data.get("quantity_unit"), None, operator_name, change_notes)
+    for key, value in data.items():
+        setattr(sample, key, value)
 
 
 def create_derived_sample(parent_id: int | None, payload: DerivedSampleCreate, db: Session, operator_name: str | None = None) -> Sample:

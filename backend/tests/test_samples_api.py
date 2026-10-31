@@ -19,7 +19,7 @@ def test_create_root_sample_with_inventory_fields(client):
         storage_location_id=1, status="received", notes="Arrived on ice",
     )
 
-    assert sample["sample_type"] == "Sample type 1"
+    assert sample["sample_type"] == "Blood (RNA shield)"
     assert sample["parent"] is None and sample["children"] == []
     assert (sample["current_quantity"], sample["storage_location"]["storage_location_id"]) == ("200.000000", 1)
     assert [event["event_type"] for event in sample["storage_events"]] == ["stored"]
@@ -43,7 +43,7 @@ def test_inline_edit_persists(client):
 
     assert updated.status_code == 200
     reloaded = client.get(f"/samples/{sample['sample_id']}").json()
-    assert (reloaded["status"], reloaded["sample_type"], reloaded["notes"]) == ("received", "Sample type 2", "checked")
+    assert (reloaded["status"], reloaded["sample_type"], reloaded["notes"]) == ("received", "Swab (RNA shield)", "checked")
 
 
 def test_children_link_to_parent_without_inheriting_values(client):
@@ -54,7 +54,7 @@ def test_children_link_to_parent_without_inheriting_values(client):
 
     assert first["parent"]["sample_code"] == "S-001"
     assert (first["sample_type"], first["current_quantity"], first["storage_location"], first["notes"], first["batch"]) == (None, None, None, None, None)
-    assert second["sample_type"] == "Sample type 3"
+    assert second["sample_type"] == "Serum"
     assert [child["sample_code"] for child in client.get(f"/samples/{parent['sample_id']}/children").json()] == ["S-001-A", "S-001-B"]
 
     client.patch(f"/samples/{first['sample_id']}", json={"notes": "changed"})
@@ -101,23 +101,23 @@ def test_change_parent_keeps_own_fields(client):
 
 
 def test_shipping_batches_contain_only_root_samples(client):
-    root = lookup(client, "SAMPLE-001-ROOT")
-    child = lookup(client, "SAMPLE-001-CHILD")
+    root = lookup(client, "PEDS-2026-08-01")
+    child = lookup(client, "PEDS-2026-08-01-RNA")
 
     assert client.patch(f"/samples/{child['sample_id']}", json={"batch_id": 1}).status_code == 400
     assert client.post("/samples", json={"sample_code": "S-X", "batch_id": 1, "parent_sample_id": root["sample_id"]}).status_code == 400
     batch = client.get("/batches/1").json()
-    assert [sample["sample_code"] for sample in batch["samples"]] == ["SAMPLE-001-ROOT"]
+    assert [sample["sample_code"] for sample in batch["samples"]] == [f"PEDS-2026-08-{n:02d}" for n in range(1, 13)]
 
 
 def test_batch_import_creates_root_samples_with_lookup_types(client):
     imported = client.post("/batches/sample-import", json={
         "batch_name": "Mosquito shipment",
-        "samples": [{"sample_code": "MQ-1", "sample_type": "sample type 4"}, {"sample_code": "MQ-2", "sample_type": "sample_type_005"}],
+        "samples": [{"sample_code": "MQ-1", "sample_type": "csf"}, {"sample_code": "MQ-2", "sample_type": "whole_blood"}],
     })
     assert imported.status_code == 200, imported.text
     codes = {sample["sample_code"]: sample["sample_type"] for sample in imported.json()["samples"]}
-    assert codes == {"MQ-1": "Sample type 4", "MQ-2": "Sample type 5"}
+    assert codes == {"MQ-1": "CSF", "MQ-2": "Whole blood"}
 
     unknown = client.post("/batches/sample-import", json={"batch_name": "Bad", "samples": [{"sample_code": "MQ-3", "sample_type": "mosquito"}]})
     assert unknown.status_code == 400
@@ -152,7 +152,7 @@ def test_aliquot_creates_derived_samples_through_a_process(client):
     assert len(detail["process_events"][0]["outputs"]) == 3
 
     aliquot = client.get(f"/samples/{detail['children'][0]['sample_id']}").json()
-    assert (aliquot["sample_type"], aliquot["current_quantity"], aliquot["storage_location"]["storage_location_id"]) == ("Sample type 2", "20.000000", 3)
+    assert (aliquot["sample_type"], aliquot["current_quantity"], aliquot["storage_location"]["storage_location_id"]) == ("Swab (RNA shield)", "20.000000", 3)
     assert aliquot["process_events"][0]["role"] == "output"
     assert aliquot["batch"] is None
 
@@ -167,7 +167,7 @@ def test_process_event_creates_derived_output_samples(client):
     response = client.post("/process-events", json={
         "process_code": "EXT-1", "process_type": "RNA extraction", "input_sample_ids": [tissue["sample_id"]],
         "quantity_used": "4", "quantity_unit": "mg", "operator_name": "kim",
-        "output_samples": [{"sample_code": "S-001-RNA", "sample_type_id": 5, "current_quantity": "30", "quantity_unit": "uL", "quantity_generated": "30"}],
+        "output_samples": [{"sample_code": "S-001-RNA", "sample_type_id": 7, "current_quantity": "30", "quantity_unit": "uL", "quantity_generated": "30"}],
     })
 
     assert response.status_code == 201, response.text
@@ -175,7 +175,7 @@ def test_process_event_creates_derived_output_samples(client):
     assert [s["sample_code"] for s in process["inputs"]] == ["S-001"]
     assert [s["sample_code"] for s in process["outputs"]] == ["S-001-RNA"]
     rna = client.get(f"/samples/{process['outputs'][0]['sample_id']}").json()
-    assert (rna["parent"]["sample_code"], rna["sample_type"]) == ("S-001", "Sample type 5")
+    assert (rna["parent"]["sample_code"], rna["sample_type"]) == ("S-001", "RNA")
     assert client.get(f"/samples/{tissue['sample_id']}").json()["current_quantity"] == "6.000000"
 
     duplicate = client.post("/process-events", json={"process_code": "EXT-1", "process_type": "x", "input_sample_ids": [tissue["sample_id"]], "output_samples": [{"sample_code": "S-OTHER"}]})
@@ -213,60 +213,64 @@ def test_storage_moves_record_history(client):
 def test_assays_operate_on_samples_with_results_qc_and_outputs(client):
     sample = create_root(client, "S-001")
 
-    created = client.post(f"/samples/{sample['sample_id']}/assays", json={"assay_instance_code": "SEQ-1", "assay_type": "Sequencing", "target": "16S"})
+    sequencing = client.post("/assay-definitions", json={"assay_name": "16S amplicon sequencing", "assay_type": "Sequencing", "target": "16S"}).json()
+    created = client.post(f"/samples/{sample['sample_id']}/assay-executions", json={"execution_code": "SEQ-1", "assay_definition_id": sequencing["assay_definition_id"]})
     assert created.status_code == 201, created.text
-    assay_id = created.json()["assay_id"]
+    execution_id = created.json()["execution_id"]
     assert created.json()["sample"]["sample_code"] == "S-001"
 
-    with_result = client.post(f"/assays/{assay_id}/results", json={"result_name": "Reads", "numeric_value": "120000"}).json()
+    with_result = client.post(f"/assay-executions/{execution_id}/results", json={"result_name": "Reads", "numeric_value": "120000"}).json()
     assert [r["result_name"] for r in with_result["results"]] == ["Reads"]
-    reviewed = client.patch(f"/assays/{assay_id}", json={"qc_status": "accepted"}).json()
+    reviewed = client.patch(f"/assay-executions/{execution_id}", json={"qc_status": "accepted"}).json()
     assert reviewed["qc_status"] == "accepted"
-    assert [a["qc_status"] for a in client.get("/assays").json() if a["assay_id"] == assay_id] == ["accepted"]
+    assert [a["qc_status"] for a in client.get("/assay-executions").json() if a["execution_id"] == execution_id] == ["accepted"]
 
-    with_output = client.post(f"/assays/{assay_id}/output-samples", json={"sample_code": "S-001-LIB", "sample_type_id": 7})
+    with_output = client.post(f"/assay-executions/{execution_id}/output-samples", json={"sample_code": "S-001-LIB", "sample_type_id": 7})
     assert with_output.status_code == 201, with_output.text
     library = with_output.json()["output_samples"][0]
     library_detail = client.get(f"/samples/{library['sample_id']}").json()
     assert library_detail["parent"]["sample_code"] == "S-001"
-    assert [a["assay_code"] for a in library_detail["generated_by_assays"]] == ["SEQ-1"]
+    assert [a["execution_code"] for a in library_detail["generated_by_assays"]] == ["SEQ-1"]
     lineage = client.get(f"/samples/{sample['sample_id']}/lineage").json()
     assert lineage["descendants"][0]["generated_by"] == {"kind": "assay", "code": "SEQ-1", "type": "Sequencing"}
 
-    assert client.post(f"/samples/{sample['sample_id']}/assays", json={"assay_instance_code": "SEQ-1", "assay_type": "Sequencing"}).status_code == 400
+    assert client.post(f"/samples/{sample['sample_id']}/assay-executions", json={"execution_code": "SEQ-1", "assay_definition_id": sequencing["assay_definition_id"]}).status_code == 400
 
 
 def test_sample_page_shows_own_activity_not_descendants(client):
-    root = lookup(client, "SAMPLE-002-ROOT")
+    root = lookup(client, "PEDS-2026-08-04")
 
     detail = client.get(f"/samples/{root['sample_id']}").json()
 
-    assert detail["assays"] == [], "the seeded assay belongs to the child sample"
-    assert [p["process_code"] for p in detail["process_events"]] == ["PROCESS-002"]
-    assert [c["sample_code"] for c in detail["children"]] == ["SAMPLE-002-CHILD"]
-    child_detail = client.get(f"/samples/{detail['children'][0]['sample_id']}").json()
-    assert [a["assay_code"] for a in child_detail["assays"]] == ["ASSAY-002"]
-    assert [f["file_name"] for f in child_detail["data_files"]] == ["seed-result-002.csv"]
+    assert detail["assays"] == [], "the seeded qPCR belongs to the cDNA, two generations down"
+    assert [p["process_code"] for p in detail["process_events"]] == ["EXT-PEDS-2026-08-04"]
+    assert [c["sample_code"] for c in detail["children"]] == ["PEDS-2026-08-04-RNA"]
+    rna = client.get(f"/samples/{detail['children'][0]['sample_id']}").json()
+    assert rna["assays"] == []
+    cdna = client.get(f"/samples/{rna['children'][0]['sample_id']}").json()
+    assert [a["assay_name"] for a in cdna["assays"]] == ["LACV qPCR (SYBR Green)"]
+    assert [f["file_name"] for f in cdna["data_files"]] == ["qpcr-peds-2026-08-04.csv"]
 
 
 def test_attach_data_files_to_sample_and_assay(client):
     sample = create_root(client, "S-001")
-    assay = client.post(f"/samples/{sample['sample_id']}/assays", json={"assay_instance_code": "QPCR-1", "assay_type": "qPCR"}).json()
+    definition_id = client.get("/assay-definitions").json()[0]["assay_definition_id"]
+    assay = client.post(f"/samples/{sample['sample_id']}/assay-executions", json={"execution_code": "QPCR-1", "assay_definition_id": definition_id}).json()
 
     client.post(f"/samples/{sample['sample_id']}/data-files", json={"file_type": "image", "file_name": "gel.png", "file_location": "/files/gel.png"})
     response = client.post(f"/samples/{sample['sample_id']}/data-files", json={
-        "file_type": "result", "file_name": "ct.csv", "file_location": "/files/ct.csv", "assay_id": assay["assay_id"], "checksum_sha256": "a" * 64,
+        "file_type": "result", "file_name": "ct.csv", "file_location": "/files/ct.csv", "assay_id": assay["execution_id"], "checksum_sha256": "a" * 64,
     })
 
     assert response.status_code == 201, response.text
     assert [f["file_name"] for f in response.json()["data_files"]] == ["gel.png", "ct.csv"]
-    assert [f["file_name"] for f in client.get(f"/assays/{assay['assay_id']}").json()["data_files"]] == ["ct.csv"]
+    assert [f["file_name"] for f in client.get(f"/assay-executions/{assay['execution_id']}").json()["data_files"]] == ["ct.csv"]
     assert client.post(f"/samples/{sample['sample_id']}/data-files", json={"file_type": "x", "file_name": "y", "file_location": "z", "checksum_sha256": "nope"}).status_code == 422
 
 
 def test_delete_only_samples_without_dependents(client):
     lonely = create_root(client, "S-001", storage_location_id=1)
-    parent = lookup(client, "SAMPLE-003-ROOT")
+    parent = lookup(client, "PEDS-2026-08-03")
 
     blocked = client.delete(f"/samples/{parent['sample_id']}")
     assert blocked.status_code == 409

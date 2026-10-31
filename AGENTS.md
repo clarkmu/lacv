@@ -107,7 +107,11 @@ Everything revolves around Samples.
 
 Sample is the single canonical physical identity. Every physical laboratory object (an incoming tube, an aliquot, an extract, a library) is a Sample. There is no separate Material entity; inventory fields (quantity, concentration, storage location, consumed/disposed) live on Sample.
 
-Aliquoting and other transformations are process events that create derived Samples. Assays operate on Samples and may produce results, derived Samples, or both.
+Aliquoting and other transformations are process events that create derived Samples.
+
+An Assay is a reusable procedure (assay_definitions), defined once and never tied to one Sample. Recording an assay on a Sample creates an assay execution (the assays table): which assay, when, performed by, volume used, status and QC. An execution may have several Assay Results and may produce derived Samples. Keep the three levels distinct: definition ≠ execution ≠ result. Who performed it belongs on the execution, never on the definition.
+
+"Material" in the lab's workflow means the Sample's type (sample_type_id), not a separate entity. subject_code identifies the study subject; aliquot_number tells apart one subject's tubes of one Material from one collection.
 
 Legacy Material codes from before Material was folded into Sample are kept in legacy_material_records and remain searchable.
 

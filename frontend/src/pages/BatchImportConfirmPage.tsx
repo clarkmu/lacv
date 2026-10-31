@@ -11,8 +11,10 @@ type ImportState = {
 
 const columns: { key: keyof BatchSampleImportRow; label: string }[] = [
   { key: 'sample_code', label: 'Sample code' },
+  { key: 'subject_code', label: 'Subject' },
   { key: 'external_sample_id', label: 'External sample ID' },
   { key: 'sample_type', label: 'Sample type' },
+  { key: 'aliquot_number', label: 'Aliquot #' },
   { key: 'source_type', label: 'Source type' },
   { key: 'source_description', label: 'Source description' },
   { key: 'collection_date', label: 'Collection date' },

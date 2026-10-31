@@ -6,19 +6,19 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import (
-    Assay, AssayDefinition, AssayOutput, AssayResult, Batch, DataFile, LegacyMaterialRecord, ProcessEvent,
+    Assay, AssayDefinition, AssayOutput, Batch, DataFile, LegacyMaterialRecord, ProcessEvent,
     ProcessEventInput, ProcessEventOutput, Sample, SampleQuantityEvent, StorageEvent, StorageLocation,
 )
 from ..quantity import availability
 from ..sample_rules import (
-    consume, create_derived_sample, get_or_create_process_type, get_sample_or_404, record_initial_storage,
-    record_quantity_change, record_storage_move, require_unique_sample_code, validate_parent, validate_references,
+    apply_sample_changes, consume, create_derived_sample, get_or_create_process_type, get_sample_or_404, record_initial_storage,
+    require_unique_sample_code, validate_parent, validate_references,
 )
 from ..schemas import (
-    AliquotCreate, AssayCreate, AssayDetail, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate, SampleDetail,
-    SampleLineage, SampleListItem, SampleRef, SampleUpdate,
+    AliquotCreate, AssayExecutionCreate, AssayExecutionDetail, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate,
+    SampleDetail, SampleLineage, SampleListItem, SampleRef, SampleUpdate,
 )
-from .assays import assay_definition_for, get_assay, next_assay_code
+from .assay_executions import get_assay_execution, record_execution, result_counts
 
 router = APIRouter(prefix="/samples", tags=["samples"])
 
@@ -178,22 +178,7 @@ def update_sample(sample_id: int, payload: SampleUpdate, db: Session = Depends(g
     data = payload.model_dump(exclude_unset=True)
     operator_name = data.pop("operator_name", None)
     change_notes = data.pop("change_notes", None)
-    if "sample_code" in data:
-        require_unique_sample_code(data["sample_code"], db, sample_id)
-    validate_references(data, db)
-    next_parent = data.get("parent_sample_id", sample.parent_sample_id)
-    next_batch = data.get("batch_id", sample.batch_id)
-    if "parent_sample_id" in data or "batch_id" in data:
-        validate_parent(sample, next_parent, next_batch, db)
-        if next_batch is not None and not db.get(Batch, next_batch):
-            raise HTTPException(404, f"Batch not found: {next_batch}")
-
-    if "storage_location_id" in data and data["storage_location_id"] != sample.storage_location_id:
-        record_storage_move(sample, sample.storage_location_id, data["storage_location_id"], db, operator_name, change_notes)
-    if "current_quantity" in data and data["current_quantity"] != sample.current_quantity:
-        record_quantity_change(sample, data["current_quantity"], "adjusted", db, data.get("quantity_unit"), None, operator_name, change_notes)
-    for key, value in data.items():
-        setattr(sample, key, value)
+    apply_sample_changes(sample, data, db, operator_name, change_notes)
     db.commit()
     return get_sample(sample_id, db)
 
@@ -267,56 +252,13 @@ def create_aliquots(sample_id: int, payload: AliquotCreate, db: Session = Depend
     return get_sample(sample_id, db)
 
 
-@router.post("/{sample_id}/assays", response_model=AssayDetail, status_code=status.HTTP_201_CREATED)
-def create_sample_assay(sample_id: int, payload: AssayCreate, db: Session = Depends(get_db)):
-    """Record an assay performed on this Sample, and the volume it used, as one change."""
+@router.post("/{sample_id}/assay-executions", response_model=AssayExecutionDetail, status_code=status.HTTP_201_CREATED)
+def create_sample_assay_execution(sample_id: int, payload: AssayExecutionCreate, db: Session = Depends(get_db)):
+    """Record an assay performed on this Sample, the volume it used, and any results, as one change."""
     sample = get_sample_or_404(sample_id, db)
-    assay_code = payload.assay_instance_code or next_assay_code(db)
-    if db.scalar(select(Assay.assay_id).where(Assay.assay_instance_code == assay_code)):
-        raise HTTPException(400, f"Assay code already exists: {assay_code}")
-    assay = Assay(
-        assay_instance_code=assay_code,
-        sample_id=sample_id,
-        assay_definition_id=_definition_for(payload, db).assay_definition_id,
-        operator_name=payload.operator_name,
-        assay_date=payload.assay_date,
-        status=payload.status,
-        qc_status=payload.qc_status,
-        notes=payload.notes,
-    )
-    db.add(assay)
-    db.flush()
-    if payload.volume_used is not None:
-        _record_volume_used(sample, assay, payload, db)
+    execution = record_execution(sample, payload, db)
     db.commit()
-    return get_assay(assay.assay_id, db)
-
-
-def _definition_for(payload: AssayCreate, db: Session) -> AssayDefinition:
-    if payload.assay_definition_id is not None:
-        definition = db.get(AssayDefinition, payload.assay_definition_id)
-        if not definition:
-            raise _field_error("assay_definition_id", f"Assay definition not found: {payload.assay_definition_id}", 404)
-        return definition
-    if not payload.assay_type:
-        raise _field_error("assay_type", "Choose an assay or enter an assay type")
-    return assay_definition_for(payload.assay_type, payload.target, payload.assay_name, db)
-
-
-def _record_volume_used(sample: Sample, assay: Assay, payload: AssayCreate, db: Session) -> None:
-    """One removal on the Sample's own ledger, linked to the assay. Unknown availability is refused, not assumed."""
-    if sample.current_quantity is None or not sample.quantity_unit:
-        raise _field_error("volume_used", f"{sample.sample_code} has no recorded quantity and unit, so the volume used cannot be deducted. Record its quantity first, or leave Volume used blank.")
-    try:
-        consume(sample, payload.volume_used, db, payload.volume_unit, None, payload.operator_name,
-                f"Used by assay {assay.assay_instance_code}", assay_id=assay.assay_id)
-    except HTTPException as error:
-        raise _field_error("volume_used", error.detail) from error
-
-
-def _field_error(field: str, message: str, status_code: int = 422) -> HTTPException:
-    """An error the form can show next to the field it is about, in FastAPI's validation-error shape."""
-    return HTTPException(status_code, [{"loc": ["body", field], "msg": message, "type": "value_error"}])
+    return get_assay_execution(execution.assay_id, db)
 
 
 @router.post("/{sample_id}/data-files", response_model=SampleDetail, status_code=status.HTTP_201_CREATED)
@@ -341,22 +283,19 @@ def _assays_where(condition, db: Session) -> list[Assay]:
 
 
 def _assay_summaries(assays: list[Assay], db: Session) -> list[dict]:
-    if not assays:
-        return []
-    result_counts = dict(db.execute(
-        select(AssayResult.assay_id, func.count()).where(AssayResult.assay_id.in_([a.assay_id for a in assays])).group_by(AssayResult.assay_id)
-    ).all())
+    counts = result_counts([assay.assay_id for assay in assays], db)
     return [
         {
-            "assay_id": assay.assay_id,
-            "assay_code": assay.assay_instance_code,
+            "execution_id": assay.assay_id,
+            "execution_code": assay.assay_instance_code,
+            "assay_definition_id": assay.assay_definition_id,
             "assay_name": assay.definition.assay_name,
             "assay_type": assay.definition.assay_type,
             "target": assay.definition.target,
             "status": assay.status,
             "qc_status": assay.qc_status,
             "assay_date": assay.assay_date,
-            "result_count": result_counts.get(assay.assay_id, 0),
+            "result_count": counts.get(assay.assay_id, 0),
         }
         for assay in assays
     ]

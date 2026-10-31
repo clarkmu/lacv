@@ -15,7 +15,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 function sample(sample_id: number, sample_code: string, fields: Partial<SampleListItem> = {}): SampleListItem {
   return {
     sample_id, sample_code, sample_type: null, status: 'available', sample_type_id: null, parent_sample_id: null, batch_id: null,
-    external_sample_id: null, label: null, received_date: null, current_quantity: null, quantity_unit: null, storage_location_id: null,
+    external_sample_id: null, subject_code: null, aliquot_number: null, label: null, received_date: null, current_quantity: null, quantity_unit: null, storage_location_id: null,
     legacy_codes: [], ...fields,
   }
 }

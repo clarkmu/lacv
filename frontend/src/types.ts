@@ -10,6 +10,8 @@ export type SampleListItem = SampleRef & {
   parent_sample_id: number | null
   batch_id: number | null
   external_sample_id: string | null
+  subject_code: string | null
+  aliquot_number: number | null
   label: string | null
   received_date: string | null
   current_quantity: string | null
@@ -24,11 +26,34 @@ export type BatchBrief = {
   batch_name: string
 }
 
-export type BatchDetail = BatchBrief & { description: string | null; is_active: boolean; samples: SampleRef[] }
+export type BatchListItem = BatchBrief & { description: string | null; is_active: boolean; sample_count: number }
+
+/** A root Sample as the Batch page lists and edits it. */
+export type BatchSampleRow = {
+  sample_id: number
+  sample_code: string
+  subject_code: string | null
+  external_sample_id: string | null
+  sample_type_id: number | null
+  sample_type: string | null
+  aliquot_number: number | null
+  collection_date: string | null
+  received_date: string | null
+  status: string
+  current_quantity: string | null
+  quantity_unit: string | null
+  storage_location_id: number | null
+  storage_location_code: string | null
+  child_count: number
+}
+
+export type BatchDetail = BatchBrief & { description: string | null; is_active: boolean; samples: BatchSampleRow[] }
 
 export type BatchSampleImportRow = {
   sample_code: string
+  subject_code: string | null
   external_sample_id: string | null
+  aliquot_number: number | null
   sample_type: string | null
   source_type: string | null
   source_description: string | null
@@ -63,9 +88,11 @@ export type ProcessEventSummary = {
   outputs: SampleRef[]
 }
 
+/** An assay execution as the Sample page lists it. */
 export type AssaySummary = {
-  assay_id: number
-  assay_code: string
+  execution_id: number
+  execution_code: string
+  assay_definition_id: number
   assay_name: string
   assay_type: string
   target: string | null
@@ -183,7 +210,6 @@ export type ProcessEventDetail = {
 
 export type AssayResult = {
   assay_result_id: number
-  assay_id: number
   analyte: string | null
   result_name: string
   numeric_value: string | null
@@ -193,9 +219,40 @@ export type AssayResult = {
   qc_status: string
 }
 
-export type AssayBrief = {
-  assay_id: number
+/** A result an execution of the assay reports, e.g. "CT" for analyte "LACV". */
+export type ExpectedResult = {
+  analyte: string | null
+  result_name: string
+  unit: string | null
+  value_type: 'numeric' | 'text' | 'either'
+}
+
+/** A reusable assay procedure. */
+export type AssayDefinition = {
+  assay_definition_id: number
   assay_code: string
+  assay_name: string
+  assay_type: string
+  target: string | null
+  kit: string | null
+  instrument: string | null
+  typical_volume: string | null
+  typical_volume_unit: string | null
+  is_active: boolean
+  expected_results: ExpectedResult[]
+}
+
+export type AssayDefinitionListItem = AssayDefinition & {
+  execution_count: number
+  sample_count: number
+  last_performed: string | null
+}
+
+/** One execution of an assay on one Sample. */
+export type AssayExecution = {
+  execution_id: number
+  execution_code: string
+  assay_definition_id: number
   assay_name: string
   assay_type: string
   target: string | null
@@ -204,21 +261,44 @@ export type AssayBrief = {
   assay_date: string | null
   status: string
   qc_status: string
+  result_count: number
 }
 
-export type AssayDefinition = {
-  assay_definition_id: number
-  assay_code: string
-  assay_name: string
-  assay_type: string
-  target: string | null
+export type AssayDefinitionDetail = AssayDefinitionListItem & {
+  description: string | null
+  source_file_name: string | null
+  source_sha256: string | null
+  imported_at: string | null
+  created_at: string
+  executions: AssayExecution[]
 }
 
-export type AssayDetail = AssayBrief & {
+export type AssayExecutionDetail = AssayExecution & {
+  definition: AssayDefinition
   notes: string | null
   volume_used: string | null
   volume_unit: string | null
   results: AssayResult[]
   output_samples: SampleRef[]
   data_files: DataFile[]
+}
+
+export type AssayDefinitionDraft = {
+  assay_code?: string | null
+  assay_name: string
+  assay_type: string
+  target: string | null
+  kit: string | null
+  instrument: string | null
+  typical_volume: string | null
+  typical_volume_unit: string | null
+  description: string | null
+  expected_results: ExpectedResult[]
+}
+
+export type AssayImportPreview = {
+  source: { file_name: string; sha256: string; sheets: string[] }
+  definition: AssayDefinitionDraft | null
+  problems: string[]
+  can_import: boolean
 }

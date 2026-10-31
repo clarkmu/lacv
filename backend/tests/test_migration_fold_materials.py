@@ -8,7 +8,7 @@ import pytest
 from conftest import alembic, api_client, build_current_database, query, run_sql
 
 # The newest revision: upgrading runs every migration after the fold, too.
-HEAD = "20261031_0005"
+HEAD = "20261101_0006"
 
 MATERIAL_SNAPSHOT = """
     SELECT m.material_code, s.sample_code, t.type_name, m.material_label, m.material_subtype, m.current_quantity,
@@ -205,7 +205,7 @@ def test_legacy_material_codes_find_their_sample_through_the_api(legacy_database
         detail = client.get(f"/samples/{found.json()['sample_id']}").json()
         assert [item["material_code"] for item in detail["legacy_identifiers"]] == ["MAT-010-CHILD"]
         assert detail["legacy_codes"] == ["MAT-010-CHILD"]
-        assert [assay["assay_code"] for assay in detail["assays"]] == ["ASSAY-010"]
+        assert [assay["execution_code"] for assay in detail["assays"]] == ["ASSAY-010"]
         assert detail["parent"]["sample_code"] == "SAMPLE-010-ROOT"
 
         reused = client.post("/samples", json={"sample_code": "MAT-010-ROOT"})

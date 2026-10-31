@@ -22,6 +22,8 @@ const groups: { title: string; fields: Field[] }[] = [
       { key: 'status', label: 'Status', kind: 'text' },
       { key: 'label', label: 'Label', kind: 'text' },
       { key: 'external_sample_id', label: 'External ID', kind: 'text' },
+      { key: 'subject_code', label: 'Subject', kind: 'text' },
+      { key: 'aliquot_number', label: 'Aliquot #', kind: 'number' },
     ],
   },
   {
@@ -114,7 +116,7 @@ export function SampleProperties({ sample }: { sample: SampleDetail }) {
       return <textarea {...common} value={value} onChange={event => setDraft(d => ({ ...d, [field.key]: event.target.value }))} onBlur={() => commit(field)} className={cn(controlClass, 'h-auto min-h-20 py-1')} placeholder="No notes" />
     }
     const type = field.kind === 'number' ? 'number' : field.kind === 'datetime' ? 'datetime-local' : 'text'
-    return <input {...common} type={type} step={field.kind === 'number' ? 'any' : undefined} value={value} onChange={event => setDraft(d => ({ ...d, [field.key]: event.target.value }))} onBlur={() => commit(field)} className={cn(controlClass, (field.key === 'sample_code' || field.key === 'external_sample_id') && 'font-mono', field.kind === 'number' && 'tabular-nums')} />
+    return <input {...common} type={type} step={field.kind === 'number' ? 'any' : undefined} value={value} onChange={event => setDraft(d => ({ ...d, [field.key]: event.target.value }))} onBlur={() => commit(field)} className={cn(controlClass, (field.key === 'sample_code' || field.key === 'external_sample_id' || field.key === 'subject_code') && 'font-mono', field.kind === 'number' && 'tabular-nums')} />
   }
 
   return (
