@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, FlaskConical, Plus, TriangleAlert } from 'lucide-react'
@@ -48,6 +48,8 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
   const definitionList = definitions.data ?? []
   const choosing = definitionList.length > 0 && !newDefinition
   const chosen = definitionList.find(definition => String(definition.assay_definition_id) === definitionId)
+  // React Query reports isPending on a later tick, so a fast double click needs a synchronous guard as well.
+  const submitting = useRef(false)
   const canUseVolume = sample.availability.state !== 'not_recorded' && sample.availability.state !== 'no_unit'
 
   const record = useMutation({
@@ -69,6 +71,7 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
       client.invalidateQueries({ queryKey: ['assay-definitions'] })
       navigate(`/assay/${assay.assay_id}`)
     },
+    onSettled: () => { submitting.current = false },
   })
   const fieldErrors = record.error instanceof ApiError ? record.error.fieldErrors : {}
   const assayError = fieldErrors.assay_definition_id ?? fieldErrors.assay_type
@@ -76,7 +79,9 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
 
   function submit(event: FormEvent) {
     event.preventDefault()
-    if (!record.isPending) record.mutate()
+    if (submitting.current) return
+    submitting.current = true
+    record.mutate()
   }
 
   return (

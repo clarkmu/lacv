@@ -154,8 +154,12 @@ test('the record button cannot send the assay twice', async () => {
   respond = () => new Promise(resolve => { release = () => resolve(Response.json({ assay_id: 77 }, { status: 201 })) })
   await fillAssay()
 
-  await act(async () => submitButton().click())
-  expect(submitButton().disabled).toBe(true)
+  // Two clicks before React has re-rendered, as a fast double click would be.
+  await act(async () => {
+    submitButton().click()
+    submitButton().click()
+  })
+  await waitFor(() => submitButton().disabled)
   expect(submitButton().textContent).toContain('Recording…')
   await act(async () => submitButton().click())
   await act(async () => release())
