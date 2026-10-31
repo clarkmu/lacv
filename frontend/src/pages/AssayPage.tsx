@@ -82,6 +82,7 @@ export function AssayPage() {
             <Detail label="Date of assay">{formatDateTime(assay.assay_date)}</Detail>
             <Detail label="Performed by">{assay.operator_name || ''}</Detail>
             <Detail label="Sample assayed"><SampleLink sample={assay.sample} /></Detail>
+            <Detail label="Volume used">{assay.volume_used !== null ? <span className="tabular-nums">{formatQuantity(assay.volume_used, assay.volume_unit)}</span> : <span className="text-muted-foreground">Not recorded</span>}</Detail>
             <Detail label="Assay type">{assay.assay_type}</Detail>
             <Detail label="Target">{assay.target || ''}</Detail>
             <Detail label="Notes" wide>{assay.notes ? <span className="whitespace-pre-wrap">{assay.notes}</span> : ''}</Detail>

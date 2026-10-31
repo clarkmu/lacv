@@ -95,6 +95,7 @@ export type QuantityEvent = {
   quantity_before: string | null
   quantity_after: string | null
   related_process_event_id: number | null
+  related_assay_id: number | null
   event_date: string
   operator_name: string | null
   notes: string | null
@@ -205,8 +206,18 @@ export type AssayBrief = {
   qc_status: string
 }
 
+export type AssayDefinition = {
+  assay_definition_id: number
+  assay_code: string
+  assay_name: string
+  assay_type: string
+  target: string | null
+}
+
 export type AssayDetail = AssayBrief & {
   notes: string | null
+  volume_used: string | null
+  volume_unit: string | null
   results: AssayResult[]
   output_samples: SampleRef[]
   data_files: DataFile[]

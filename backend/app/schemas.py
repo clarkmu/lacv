@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class BatchBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -184,6 +184,7 @@ class QuantityEventBrief(BaseModel):
     quantity_before: Decimal | None = None
     quantity_after: Decimal | None = None
     related_process_event_id: int | None = None
+    related_assay_id: int | None = None
     event_date: datetime
     operator_name: str | None = None
     notes: str | None = None
@@ -329,15 +330,48 @@ class AssayResultCreate(BaseModel):
     qc_status: str = "not_reviewed"
 
 class AssayCreate(BaseModel):
-    assay_instance_code: str = Field(min_length=1, max_length=100)
+    """Records an assay performed on a Sample."""
+    # Generated (ASSAY-NNN) when omitted.
+    assay_instance_code: str | None = Field(default=None, min_length=1, max_length=100)
+    # Either an existing assay definition, or a type (and optional target and name) to find or create one.
+    assay_definition_id: int | None = None
     assay_name: str | None = None
-    assay_type: str = Field(min_length=1, max_length=100)
+    assay_type: str | None = Field(default=None, min_length=1, max_length=100)
     target: str | None = None
-    operator_name: str | None = None
+    # "Performed by" in the UI.
+    operator_name: str | None = Field(default=None, max_length=150)
     assay_date: datetime | None = None
-    status: str = "planned"
+    # Recording an assay means it was performed; QC review happens afterwards on the assay.
+    status: str = "completed"
     qc_status: str = "not_reviewed"
     notes: str | None = None
+    # Sample volume the assay used; recorded as a removal on the Sample's quantity ledger.
+    volume_used: Decimal | None = Field(default=None, gt=0)
+    # Defaults to the Sample's quantity unit.
+    volume_unit: str | None = None
+
+    @field_validator("operator_name", "assay_name", "assay_type", "target", "volume_unit", mode="before")
+    @classmethod
+    def tidy_name(cls, value: str | None) -> str | None:
+        """Trim and collapse whitespace so the same name is stored the same way; blank means not given."""
+        if not isinstance(value, str):
+            return value
+        return " ".join(value.split()) or None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def tidy_notes(cls, value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return value
+        return value.strip() or None
+
+class AssayDefinitionBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    assay_definition_id: int
+    assay_code: str
+    assay_name: str
+    assay_type: str
+    target: str | None = None
 
 class AssayUpdate(BaseModel):
     operator_name: str | None = None
@@ -360,6 +394,8 @@ class AssayBrief(BaseModel):
 
 class AssayDetail(AssayBrief):
     notes: str | None = None
+    volume_used: Decimal | None = None
+    volume_unit: str | None = None
     results: list[AssayResultBrief] = []
     output_samples: list[SampleRef] = []
     data_files: list[DataFileBrief] = []

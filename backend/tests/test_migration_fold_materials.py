@@ -7,7 +7,8 @@ import pytest
 
 from conftest import alembic, api_client, build_current_database, query, run_sql
 
-HEAD = "20261030_0004"
+# The newest revision: upgrading runs every migration after the fold, too.
+HEAD = "20261031_0005"
 
 MATERIAL_SNAPSHOT = """
     SELECT m.material_code, s.sample_code, t.type_name, m.material_label, m.material_subtype, m.current_quantity,

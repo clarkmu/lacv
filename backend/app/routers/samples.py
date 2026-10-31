@@ -18,7 +18,7 @@ from ..schemas import (
     AliquotCreate, AssayCreate, AssayDetail, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate, SampleDetail,
     SampleLineage, SampleListItem, SampleRef, SampleUpdate,
 )
-from .assays import assay_definition_for, get_assay
+from .assays import assay_definition_for, get_assay, next_assay_code
 
 router = APIRouter(prefix="/samples", tags=["samples"])
 
@@ -269,13 +269,15 @@ def create_aliquots(sample_id: int, payload: AliquotCreate, db: Session = Depend
 
 @router.post("/{sample_id}/assays", response_model=AssayDetail, status_code=status.HTTP_201_CREATED)
 def create_sample_assay(sample_id: int, payload: AssayCreate, db: Session = Depends(get_db)):
-    get_sample_or_404(sample_id, db)
-    if db.scalar(select(Assay.assay_id).where(Assay.assay_instance_code == payload.assay_instance_code)):
-        raise HTTPException(400, f"Assay code already exists: {payload.assay_instance_code}")
+    """Record an assay performed on this Sample, and the volume it used, as one change."""
+    sample = get_sample_or_404(sample_id, db)
+    assay_code = payload.assay_instance_code or next_assay_code(db)
+    if db.scalar(select(Assay.assay_id).where(Assay.assay_instance_code == assay_code)):
+        raise HTTPException(400, f"Assay code already exists: {assay_code}")
     assay = Assay(
-        assay_instance_code=payload.assay_instance_code,
+        assay_instance_code=assay_code,
         sample_id=sample_id,
-        assay_definition_id=assay_definition_for(payload.assay_type, payload.target, payload.assay_name, db).assay_definition_id,
+        assay_definition_id=_definition_for(payload, db).assay_definition_id,
         operator_name=payload.operator_name,
         assay_date=payload.assay_date,
         status=payload.status,
@@ -283,8 +285,38 @@ def create_sample_assay(sample_id: int, payload: AssayCreate, db: Session = Depe
         notes=payload.notes,
     )
     db.add(assay)
+    db.flush()
+    if payload.volume_used is not None:
+        _record_volume_used(sample, assay, payload, db)
     db.commit()
     return get_assay(assay.assay_id, db)
+
+
+def _definition_for(payload: AssayCreate, db: Session) -> AssayDefinition:
+    if payload.assay_definition_id is not None:
+        definition = db.get(AssayDefinition, payload.assay_definition_id)
+        if not definition:
+            raise _field_error("assay_definition_id", f"Assay definition not found: {payload.assay_definition_id}", 404)
+        return definition
+    if not payload.assay_type:
+        raise _field_error("assay_type", "Choose an assay or enter an assay type")
+    return assay_definition_for(payload.assay_type, payload.target, payload.assay_name, db)
+
+
+def _record_volume_used(sample: Sample, assay: Assay, payload: AssayCreate, db: Session) -> None:
+    """One removal on the Sample's own ledger, linked to the assay. Unknown availability is refused, not assumed."""
+    if sample.current_quantity is None or not sample.quantity_unit:
+        raise _field_error("volume_used", f"{sample.sample_code} has no recorded quantity and unit, so the volume used cannot be deducted. Record its quantity first, or leave Volume used blank.")
+    try:
+        consume(sample, payload.volume_used, db, payload.volume_unit, None, payload.operator_name,
+                f"Used by assay {assay.assay_instance_code}", assay_id=assay.assay_id)
+    except HTTPException as error:
+        raise _field_error("volume_used", error.detail) from error
+
+
+def _field_error(field: str, message: str, status_code: int = 422) -> HTTPException:
+    """An error the form can show next to the field it is about, in FastAPI's validation-error shape."""
+    return HTTPException(status_code, [{"loc": ["body", field], "msg": message, "type": "value_error"}])
 
 
 @router.post("/{sample_id}/data-files", response_model=SampleDetail, status_code=status.HTTP_201_CREATED)

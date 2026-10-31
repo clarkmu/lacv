@@ -192,6 +192,8 @@ CREATE TABLE sample_quantity_events (
     quantity_before NUMERIC(16,6),
     quantity_after NUMERIC(16,6),
     related_process_event_id BIGINT NULL,
+    -- The assay that used this volume, when an assay recorded it. Its foreign key follows the assays table.
+    related_assay_id BIGINT NULL,
     event_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     operator_name VARCHAR(150),
     notes TEXT,
@@ -256,6 +258,9 @@ CREATE INDEX idx_assay_sample ON assays(sample_id);
 CREATE INDEX idx_assay_definition ON assays(assay_definition_id);
 CREATE INDEX idx_assay_run ON assays(assay_run_id);
 CREATE INDEX idx_assay_status ON assays(status);
+
+ALTER TABLE sample_quantity_events ADD CONSTRAINT fk_quantity_assay FOREIGN KEY (related_assay_id) REFERENCES assays(assay_id) ON DELETE RESTRICT;
+CREATE INDEX idx_quantity_assay ON sample_quantity_events(related_assay_id);
 CREATE INDEX idx_assay_date ON assays(assay_date);
 
 -- Derived samples produced by an assay (for example a library prepared during sequencing).
@@ -342,4 +347,4 @@ CREATE TABLE alembic_version (
     version_num VARCHAR(32) NOT NULL,
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
-INSERT INTO alembic_version (version_num) VALUES ('20261030_0004');
+INSERT INTO alembic_version (version_num) VALUES ('20261031_0005');

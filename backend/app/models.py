@@ -149,6 +149,7 @@ class SampleQuantityEvent(Base):
     quantity_before: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
     quantity_after: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
     related_process_event_id: Mapped[int | None] = mapped_column(ForeignKey("process_events.process_event_id"))
+    related_assay_id: Mapped[int | None] = mapped_column(ForeignKey("assays.assay_id"))
     event_date: Mapped[datetime] = mapped_column(DateTime)
     operator_name: Mapped[str | None] = mapped_column(String(150))
     notes: Mapped[str | None] = mapped_column(Text)
