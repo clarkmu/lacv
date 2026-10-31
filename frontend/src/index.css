@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
-:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; background: #f4f6f8; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
-input, textarea, select { outline: none; }
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #172033;
+  background: #f1f4f8;
+  -webkit-font-smoothing: antialiased;
+}
+body { margin: 0; min-width: 320px; min-height: 100vh; background: #f1f4f8; }
+
+/* Keyboard focus is always visible; mouse clicks do not leave rings behind. */
+@layer base {
+  :focus { outline: none; }
+  :focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
+  :where(input, textarea, select):focus-visible { outline-offset: 0; }
+}

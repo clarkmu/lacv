@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { ListTable } from '../components/ListTable'
+import { buttonClass, errorClass, inputClass, PageHeader, StatusBadge } from '../components/ui'
 import { formatDateTime, formatQuantity } from '../format'
 import type { SampleListItem } from '../types'
 
@@ -24,45 +25,52 @@ export function SamplesPage() {
     if (code.trim()) lookup.mutate(code.trim())
   }
 
-  if (isLoading) return <p>Loading samples…</p>
-  if (error) return <p className="text-red-700">Could not load samples.</p>
+  if (isLoading) return <p className="py-6 text-sm text-slate-500">Loading samples…</p>
+  if (error) return <p role="alert" className={errorClass}>Could not load samples.</p>
 
   return (
     <section>
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <div><h1 className="text-xl font-semibold">Samples</h1><p className="text-sm text-slate-500">Every physical sample, original and derived.</p></div>
-        <div className="flex flex-wrap items-center gap-2">
-          <form onSubmit={openCode} className="flex gap-1" aria-label="Open by code">
-            <input value={code} onChange={event => setCode(event.target.value)} placeholder="Scan or type a sample or legacy MAT code" className="w-72 rounded border border-slate-300 px-2 py-1.5 text-sm" />
-            <button className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">Open</button>
+      <PageHeader
+        title="Samples"
+        description="Every physical sample, original and derived."
+        actions={<>
+          <form onSubmit={openCode} className="flex w-full gap-1.5 sm:w-auto" aria-label="Open by code">
+            <input value={code} onChange={event => setCode(event.target.value)} aria-label="Sample or legacy MAT code" placeholder="Scan or type a sample or legacy MAT code" className={`${inputClass} min-w-0 flex-1 font-mono sm:w-80 sm:flex-none placeholder:font-sans`} />
+            <button className={buttonClass.secondary}>Open</button>
           </form>
-          <Link to="/samples/new" className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white">Create root sample</Link>
-        </div>
-      </div>
-      {lookup.error && <p role="alert" className="mb-2 text-sm text-red-700">{lookup.error.message}</p>}
+          <Link to="/samples/new" className={buttonClass.primary}>Create root sample</Link>
+        </>}
+      />
+      {lookup.error && <p role="alert" className={`${errorClass} mb-3`}>{lookup.error.message}</p>}
       <ListTable<SampleListItem>
         rows={data}
         searchPlaceholder="Filter by code, legacy code, type, status, label, or external ID"
         getRowKey={sample => sample.sample_id}
         emptyMessage="No samples match your filter."
         filters={
-          <label className="flex items-center gap-1.5 text-sm text-slate-700">
-            <input type="checkbox" checked={baseSamplesOnly} onChange={event => setBaseSamplesOnly(event.target.checked)} className="h-4 w-4" />
+          <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 text-sm text-slate-700 select-none">
+            <input type="checkbox" checked={baseSamplesOnly} onChange={event => setBaseSamplesOnly(event.target.checked)} className="h-4 w-4 cursor-pointer accent-indigo-600" />
             Base samples only
           </label>
         }
         columns={[
-          { key: 'sample_code', label: 'Sample', value: sample => sample.sample_code, render: sample => <Link className="font-medium text-blue-700 hover:underline" to={`/sample/${sample.sample_id}`}>{sample.sample_code}</Link> },
+          { key: 'sample_code', label: 'Sample', value: sample => sample.sample_code, render: sample => <Link className="font-mono text-[13px] font-semibold text-indigo-700 hover:text-indigo-900 hover:underline" to={`/sample/${sample.sample_id}`}>{sample.sample_code}</Link> },
           { key: 'sample_type', label: 'Type', value: sample => sample.sample_type },
-          { key: 'status', label: 'Status', value: sample => sample.status },
-          { key: 'label', label: 'Label', value: sample => sample.label },
-          { key: 'parent', label: 'Parent', value: sample => (sample.parent_sample_id ? codes.get(sample.parent_sample_id) : ''), render: sample => sample.parent_sample_id ? <Link className="text-blue-700 hover:underline" to={`/sample/${sample.parent_sample_id}`}>{codes.get(sample.parent_sample_id)}</Link> : '' },
-          { key: 'quantity', label: 'Quantity', value: sample => (sample.current_quantity === null ? null : Number(sample.current_quantity)), render: sample => formatQuantity(sample.current_quantity, sample.quantity_unit) },
-          { key: 'external_sample_id', label: 'External ID', value: sample => sample.external_sample_id },
-          { key: 'received_date', label: 'Received', value: sample => sample.received_date, render: sample => formatDateTime(sample.received_date) },
-          { key: 'legacy_codes', label: 'Legacy codes', value: sample => sample.legacy_codes.join(' ') },
+          { key: 'status', label: 'Status', value: sample => sample.status, render: sample => <StatusBadge status={sample.status} /> },
+          { key: 'label', label: 'Label', value: sample => sample.label, render: sample => <span className="text-slate-900">{sample.label}</span> },
+          { key: 'parent', label: 'Parent', value: sample => (sample.parent_sample_id ? codes.get(sample.parent_sample_id) : ''), render: sample => sample.parent_sample_id ? <Link className="font-mono text-xs text-slate-600 hover:text-indigo-700 hover:underline" to={`/sample/${sample.parent_sample_id}`}>{codes.get(sample.parent_sample_id)}</Link> : '' },
+          { key: 'quantity', label: 'Quantity', numeric: true, value: sample => (sample.current_quantity === null ? null : Number(sample.current_quantity)), render: sample => <Quantity value={sample.current_quantity} unit={sample.quantity_unit} /> },
+          { key: 'external_sample_id', label: 'External ID', value: sample => sample.external_sample_id, render: sample => <span className="font-mono text-xs">{sample.external_sample_id}</span> },
+          { key: 'received_date', label: 'Received', value: sample => sample.received_date, render: sample => <span className="text-slate-600 tabular-nums">{formatDateTime(sample.received_date)}</span> },
+          { key: 'legacy_codes', label: 'Legacy codes', value: sample => sample.legacy_codes.join(' '), render: sample => <span className="font-mono text-xs text-slate-400">{sample.legacy_codes.join(' ')}</span> },
         ]}
       />
     </section>
   )
+}
+
+function Quantity({ value, unit }: { value: string | null; unit: string | null }) {
+  const amount = formatQuantity(value, null)
+  if (!amount) return null
+  return <span className="font-medium text-slate-900">{amount}{unit && <> <span className="font-normal text-slate-500">{unit}</span></>}</span>
 }
