@@ -1,12 +1,14 @@
 import { FormEvent, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 
 export function NewStorageLocationPage() {
   const navigate = useNavigate()
   const locations = useQuery({ queryKey: ['storage-locations'], queryFn: api.listStorageLocations })
-  const [parentLocationId, setParentLocationId] = useState('')
+  // Opened from a location's "Add location inside" with ?parent=<id>.
+  const [searchParams] = useSearchParams()
+  const [parentLocationId, setParentLocationId] = useState(searchParams.get('parent') ?? '')
   const [locationCode, setLocationCode] = useState('')
   const [locationType, setLocationType] = useState('')
   const [locationName, setLocationName] = useState('')

@@ -75,6 +75,35 @@ export type SampleType = {
 
 export type StorageLocation = { storage_location_id: number; parent_location_id: number | null; location_code: string; location_type: string; location_name: string | null; is_active: boolean }
 
+/** One physical tube stored in a location. root is the original Sample it derives from (null when it is itself original). */
+export type StoredSample = {
+  sample_id: number
+  sample_code: string
+  sample_type_id: number | null
+  sample_type: string | null
+  status: string
+  subject_code: string | null
+  aliquot_number: number | null
+  label: string | null
+  current_quantity: string | null
+  quantity_unit: string | null
+  concentration: string | null
+  concentration_unit: string | null
+  received_date: string | null
+  legacy_codes: string[]
+  parent: SampleRef | null
+  root: SampleRef | null
+  storage_location_id: number
+  storage_location_code: string
+}
+
+export type StorageLocationDetail = StorageLocation & {
+  description: string | null
+  ancestors: StorageLocation[]
+  sub_locations: (StorageLocation & { sample_count: number })[]
+  contents: StoredSample[]
+}
+
 export type ProcessEventSummary = {
   process_event_id: number
   process_code: string

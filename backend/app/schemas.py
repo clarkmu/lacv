@@ -564,6 +564,39 @@ class AssayExecutionDetail(AssayExecutionBrief):
     output_samples: list[SampleRef] = []
     data_files: list[DataFileBrief] = []
 
+class StorageSubLocation(StorageLocationBrief):
+    """A location inside another, with how many Samples are stored in it and below it."""
+    sample_count: int = 0
+
+class StoredSample(BaseModel):
+    """One physical tube in a location. root is the original Sample it derives from, when it is not itself original."""
+    sample_id: int
+    sample_code: str
+    sample_type_id: int | None = None
+    sample_type: str | None = None
+    status: str
+    subject_code: str | None = None
+    aliquot_number: int | None = None
+    label: str | None = None
+    current_quantity: Decimal | None = None
+    quantity_unit: str | None = None
+    concentration: Decimal | None = None
+    concentration_unit: str | None = None
+    received_date: datetime | None = None
+    legacy_codes: list[str] = []
+    parent: SampleRef | None = None
+    root: SampleRef | None = None
+    storage_location_id: int
+    storage_location_code: str
+
+class StorageLocationDetail(StorageLocationBrief):
+    description: str | None = None
+    # Outermost first, ending with this location's parent.
+    ancestors: list[StorageLocationBrief] = []
+    sub_locations: list[StorageSubLocation] = []
+    # Samples stored here and in every location below this one.
+    contents: list[StoredSample] = []
+
 class StorageLocationCreate(BaseModel):
     parent_location_id: int | None = None
     location_code: str

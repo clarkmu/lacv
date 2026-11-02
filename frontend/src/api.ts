@@ -1,7 +1,7 @@
 import type {
   AssayDefinitionDetail, AssayDefinitionDraft, AssayDefinitionListItem, AssayExecution, AssayExecutionDetail, AssayImportPreview, BatchDetail,
   BatchListItem, BatchSampleImportPreview, BatchSampleImportRow, ProcessEventDetail, SampleDetail, SampleLineage, SampleListItem, SampleRef, SampleType,
-  StorageLocation,
+  StorageLocation, StorageLocationDetail,
 } from './types'
 
 const API = '/api'
@@ -102,7 +102,7 @@ export const api = {
   createAssayOutputSample: (executionId: number, payload: Record<string, unknown>) => post<AssayExecutionDetail>(`/assay-executions/${executionId}/output-samples`, payload),
 
   listStorageLocations: () => request<StorageLocation[]>('/storage-locations'),
-  getStorageLocation: (id: string | number) => request<StorageLocation>(`/storage-locations/${id}`),
+  getStorageLocation: (id: string | number) => request<StorageLocationDetail>(`/storage-locations/${id}`),
   createStorageLocation: (payload: Record<string, unknown>) => post<StorageLocation>('/storage-locations', payload),
   updateStorageLocation: (id: number, changes: Record<string, unknown>) => patch<StorageLocation>(`/storage-locations/${id}`, changes),
 }
