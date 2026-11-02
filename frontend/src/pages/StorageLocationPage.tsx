@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { api, ApiError } from '../api'
-import { ListTable } from '../components/ListTable'
+import { ListTable, type ListTableColumn } from '../components/ListTable'
 import { inputClass, Panel, QuantityValue, SampleLink, SampleTypeLabel, SecondaryCode, StatusBadge } from '../components/common'
 import { distinct, Field } from '../components/form'
 import { SuggestInput } from '../components/SuggestInput'
@@ -53,10 +53,7 @@ function LocationView({ location }: { location: StorageLocationDetail }) {
             <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
               <span className="capitalize text-foreground/80">{location.location_type}</span>
               {!location.is_active && <StatusBadge status="inactive" />}
-              <span className="tabular-nums">
-                {here} {here === 1 ? 'sample' : 'samples'} stored here
-                {below > 0 && <>, {below} more in sub-locations</>}
-              </span>
+              <span className="tabular-nums">{countLine(here, below)}</span>
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -67,13 +64,21 @@ function LocationView({ location }: { location: StorageLocationDetail }) {
       </header>
 
       <div className={cn('grid items-start gap-4', location.sub_locations.length > 0 && 'lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]')}>
-        {editing ? <LocationEditor location={location} onDone={() => setEditing(false)} /> : <LocationDetails location={location} />}
+        {editing ? <LocationEditor location={location} onDone={() => setEditing(false)} /> : <LocationDetails location={location} spread={location.sub_locations.length === 0} />}
         {location.sub_locations.length > 0 && <SubLocations location={location} />}
       </div>
 
       <Contents location={location} />
     </div>
   )
+}
+
+function countLine(here: number, below: number) {
+  const samples = (count: number) => `${count} ${count === 1 ? 'sample' : 'samples'}`
+  if (here === 0 && below === 0) return 'Empty'
+  if (below === 0) return `${samples(here)} stored here`
+  if (here === 0) return `${samples(below)} in sub-locations`
+  return `${samples(here)} stored here, ${below} more in sub-locations`
 }
 
 function LocationCrumb({ location }: { location: StorageLocation }) {
@@ -85,11 +90,12 @@ function LocationCrumb({ location }: { location: StorageLocation }) {
   )
 }
 
-function LocationDetails({ location }: { location: StorageLocationDetail }) {
+/** spread: the panel has the full width to itself, so lay the fields out three across instead of two. */
+function LocationDetails({ location, spread }: { location: StorageLocationDetail; spread: boolean }) {
   const parent = location.ancestors.at(-1)
   return (
     <Panel title="Location">
-      <dl className="grid gap-x-6 text-[13px] sm:grid-cols-2">
+      <dl className={cn('grid gap-x-8 text-[13px] sm:grid-cols-2', spread && 'xl:grid-cols-3')}>
         <Detail label="Code"><span className="font-mono">{location.location_code}</span></Detail>
         <Detail label="Type"><span className="capitalize">{location.location_type}</span></Detail>
         <Detail label="Name">{location.location_name}</Detail>
@@ -98,7 +104,7 @@ function LocationDetails({ location }: { location: StorageLocationDetail }) {
         <Detail label="Path">
           <span className="font-mono text-xs">{[...location.ancestors.map(ancestor => ancestor.location_code), location.location_code].join(' › ')}</span>
         </Detail>
-        <Detail label="Description" wide>{location.description && <span className="whitespace-pre-wrap">{location.description}</span>}</Detail>
+        <Detail label="Description" wide spread={spread}>{location.description && <span className="whitespace-pre-wrap">{location.description}</span>}</Detail>
       </dl>
     </Panel>
   )
@@ -200,11 +206,25 @@ function SubLocations({ location }: { location: StorageLocationDetail }) {
   )
 }
 
+// Columns many tubes leave blank, keyed by the field that fills them.
+const OPTIONAL_COLUMNS: Partial<Record<string, keyof StoredSample>> = {
+  subject_code: 'subject_code', aliquot_number: 'aliquot_number', concentration: 'concentration', label: 'label', legacy_codes: 'legacy_codes',
+  received_date: 'received_date',
+}
+
 function Contents({ location }: { location: StorageLocationDetail }) {
   const hasSubLocations = location.sub_locations.length > 0
   const [includeBelow, setIncludeBelow] = useState(true)
   const showBelow = hasSubLocations && includeBelow
   const rows = showBelow ? location.contents : location.contents.filter(sample => sample.storage_location_id === location.storage_location_id)
+  // An optional column is shown only when some tube in the table has a value for it.
+  const shown = (column: ListTableColumn<StoredSample>) => {
+    const field = OPTIONAL_COLUMNS[column.key]
+    return !field || rows.some(sample => {
+      const value = sample[field]
+      return Array.isArray(value) ? value.length > 0 : value !== null && value !== ''
+    })
+  }
 
   return (
     <section aria-label="Contents" className="space-y-2">
@@ -221,7 +241,7 @@ function Contents({ location }: { location: StorageLocationDetail }) {
       ) : (
         <ListTable<StoredSample>
           rows={rows}
-          searchPlaceholder="Filter by sample, original sample, subject, type, status, location, or legacy code"
+          searchPlaceholder="Filter contents…"
           getRowKey={sample => sample.sample_id}
           emptyMessage={showBelow || !hasSubLocations ? 'No samples match your filter.' : 'Nothing is stored directly here; include sub-locations to see their contents.'}
           filters={hasSubLocations && (
@@ -230,7 +250,7 @@ function Contents({ location }: { location: StorageLocationDetail }) {
               <label htmlFor="include-sub-locations" className="cursor-pointer text-[13px] select-none">Include sub-locations</label>
             </div>
           )}
-          columns={[
+          columns={([
             { key: 'sample_code', label: 'Sample', value: sample => sample.sample_code, render: sample => <SampleLink sample={sample} className="text-[13px]" /> },
             {
               key: 'root', label: 'From original sample', value: sample => sample.root?.sample_code ?? sample.sample_code,
@@ -255,16 +275,16 @@ function Contents({ location }: { location: StorageLocationDetail }) {
             { key: 'label', label: 'Label', value: sample => sample.label },
             { key: 'legacy_codes', label: 'Legacy codes', value: sample => sample.legacy_codes.join(' '), render: sample => <SecondaryCode>{sample.legacy_codes.join(' ')}</SecondaryCode> },
             { key: 'received_date', label: 'Received', value: sample => sample.received_date, render: sample => <span className="text-muted-foreground tabular-nums">{formatDateTime(sample.received_date)}</span> },
-          ]}
+          ] satisfies ListTableColumn<StoredSample>[]).filter(shown)}
         />
       )}
     </section>
   )
 }
 
-function Detail({ label, wide = false, children }: { label: string; wide?: boolean; children: ReactNode }) {
+function Detail({ label, wide = false, spread = false, children }: { label: string; wide?: boolean; spread?: boolean; children: ReactNode }) {
   return (
-    <div className={`grid grid-cols-[6.5rem_1fr] items-baseline gap-2 border-b py-1.5 last:border-b-0 ${wide ? 'sm:col-span-2' : ''}`}>
+    <div className={cn('grid grid-cols-[6.5rem_1fr] items-baseline gap-2 border-b py-1.5 last:border-b-0', wide && 'sm:col-span-2', wide && spread && 'xl:col-span-3')}>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="min-w-0">{children || <span className="text-muted-foreground/60">—</span>}</dd>
     </div>
