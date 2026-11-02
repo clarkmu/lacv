@@ -1,0 +1,25 @@
+# Local development environment for LACV (backend, tests, PostgreSQL tooling).
+# Create:  conda env create -f environment.yml
+# Update:  conda env update -n lacv -f environment.yml --prune
+# Python pins match backend/requirements*.txt; PostgreSQL matches production (postgres:17).
+# Node is not here: it comes from nvm, and JavaScript packages live in frontend/node_modules.
+name: lacv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  # Backend (backend/requirements.txt)
+  - fastapi=0.116.1
+  - uvicorn-standard=0.35.0
+  - sqlalchemy=2.0.43
+  - alembic=1.16.4
+  - psycopg=3.2.10
+  - pydantic=2.11.7
+  - cryptography=45.0.6
+  - openpyxl=3.1.5
+  - python-multipart=0.0.20
+  # Tests (backend/requirements-dev.txt)
+  - pytest=9.2.0
+  - httpx=0.28.1
+  # PostgreSQL 17 server and client tools (psql, pg_dump, pg_restore, createdb, initdb, pg_ctl)
+  - postgresql=17

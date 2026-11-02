@@ -68,7 +68,77 @@ Earlier versions kept a separate `materials` table alongside `samples`. Alembic 
 - Deployment: Docker Compose
 - TLS: browser to gateway is HTTPS; gateway to FastAPI is also HTTPS. The local certificate is self-signed for development.
 
-## Run Locally
+## Local Development Without Docker
+
+The development Mac does not need Docker. Python, the backend packages and PostgreSQL 17 come from one Conda environment, `lacv` (`environment.yml`). Node comes from nvm, at Node 22.12 or newer (developed on 22.12.0; the production image builds with Node 24). JavaScript packages live in `frontend/node_modules` and are installed from `package-lock.json`.
+
+| Piece | Where | Port |
+| --- | --- | --- |
+| PostgreSQL 17 (data, log, socket) | `~/.local/share/lacv/` (`pg/` is the cluster) | 15432, 127.0.0.1 only |
+| Backend (FastAPI) | `conda run -n lacv uvicorn …` | 8000 |
+| Frontend (Vite) | `npm run dev`, forwards `/api` to the backend | 5173 |
+
+Commands below are run from the repository root unless a `cd` says otherwise.
+
+**1. Create the Conda environment** (once; `conda env update -n lacv -f environment.yml --prune` after `environment.yml` changes):
+
+```bash
+conda env create -f environment.yml
+```
+
+**2. Create the PostgreSQL cluster** (once). Local connections only, no password:
+
+```bash
+mkdir -p ~/.local/share/lacv
+conda run -n lacv initdb -D ~/.local/share/lacv/pg -U lims --auth=trust --encoding=UTF8 --locale=en_US.UTF-8
+printf "\nport = 15432\nlisten_addresses = '127.0.0.1'\nunix_socket_directories = '%s'\n" ~/.local/share/lacv >> ~/.local/share/lacv/pg/postgresql.conf
+```
+
+**3. Start PostgreSQL** (after a reboot, too):
+
+```bash
+conda run -n lacv pg_ctl -D ~/.local/share/lacv/pg -l ~/.local/share/lacv/postgres.log start
+```
+
+**4. Create and migrate the development database.** A new database gets `schema.sql` and the seed data, as a new Docker volume does; `alembic upgrade head` then applies any later migrations (on a new database it has nothing to do). The connection settings:
+
+```bash
+export PGHOST=127.0.0.1 PGPORT=15432 PGUSER=lims
+export DATABASE_URL=postgresql+psycopg://lims@127.0.0.1:15432/research_sample_tracker
+```
+
+```bash
+conda run -n lacv createdb research_sample_tracker
+conda run -n lacv psql -v ON_ERROR_STOP=1 -d research_sample_tracker -f database/schema.sql -f database/seed.sql
+(cd backend && conda run -n lacv alembic upgrade head)
+```
+
+For an existing development database, run only the `alembic upgrade head` line. To start over with fresh seed data, `conda run -n lacv dropdb research_sample_tracker` and repeat this step.
+
+**5. Start the backend** (reloads on code changes):
+
+```bash
+cd backend
+DATABASE_URL=postgresql+psycopg://lims@127.0.0.1:15432/research_sample_tracker conda run --no-capture-output -n lacv uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**6. Start the frontend** in another terminal, then open http://localhost:5173. The dev server forwards `/api` to the backend on port 8000, stripping the prefix as the production gateway does; set `LACV_API_URL` to use another backend. `npm run dev` listens on all interfaces, so the app is also reachable from your local network.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+**7. Stop** the frontend and backend with Ctrl-C, then PostgreSQL:
+
+```bash
+conda run -n lacv pg_ctl -D ~/.local/share/lacv/pg stop
+```
+
+## Run With Docker Compose
+
+Docker Compose is how production runs (see "Deploying On The DGX Spark"). On a machine with Docker it also runs the whole stack locally:
 
 ```bash
 cp .env.example .env
@@ -175,19 +245,20 @@ The reports land in `backend/identity-audit/`. `summary.md` must show no ambiguo
 
 ## Tests
 
-Backend tests need a PostgreSQL server where the test user may create databases. Each test creates and drops its own database.
+Backend tests need a PostgreSQL server where the test user may create databases; the development cluster above works. Each test creates and drops its own database, so the development data is untouched.
 
 ```bash
 cd backend
-pip install -r requirements-dev.txt
-LACV_TEST_DATABASE_URL=postgresql+psycopg://lims:lims_dev_password@localhost:5432/postgres pytest
+LACV_TEST_DATABASE_URL=postgresql+psycopg://lims@127.0.0.1:15432/postgres conda run -n lacv python -m pytest
 ```
 
-Frontend tests run in Node with a simulated browser (Vitest and jsdom). They need Node 22.12 or newer:
+Frontend tests run in Node with a simulated browser (Vitest and jsdom). They need Node 22.12 or newer. Type checking and the production build:
 
 ```bash
 cd frontend
 npm test
+npx tsc -b
+npm run build
 ```
 
 Migration tests start from the pre-migration schema and seed data kept in `backend/tests/fixtures/` and run the real Alembic upgrade.
@@ -195,7 +266,7 @@ Migration tests start from the pre-migration schema and seed data kept in `backe
 The deployment script has its own tests. They use a throwaway Git origin and a stub `docker`, and run the real `pg_dump`/`pg_restore` against a throwaway database, so they never touch Docker or a deployment:
 
 ```bash
-PGHOST=localhost PGPORT=5432 PGUSER=postgres deploy/tests/test_deploy.sh
+PGHOST=127.0.0.1 PGPORT=15432 PGUSER=lims conda run -n lacv deploy/tests/test_deploy.sh
 ```
 
 ## Design Rules

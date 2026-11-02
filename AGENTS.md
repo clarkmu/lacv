@@ -264,11 +264,32 @@ Never edit production schemas manually.
 
 ---
 
+# Development Environment
+
+The development Mac does not have Docker. Local development uses:
+
+- the `lacv` Conda environment (`environment.yml`) for Python, the backend packages, pytest, and PostgreSQL 17 server and client tools;
+- a PostgreSQL 17 cluster in `~/.local/share/lacv/pg` on 127.0.0.1:15432 (user `lims`, no password, database `research_sample_tracker`);
+- Node from nvm, with JavaScript packages in `frontend/node_modules` from `package-lock.json`.
+
+README.md, "Local Development Without Docker", has the commands.
+
+Rules for agents:
+
+- `lacv` is the required Conda environment for Python, backend and PostgreSQL tooling. Use explicit `conda run -n lacv ...` commands rather than assuming an activated shell.
+- Never install project Python packages into Conda `base`, system Python, Homebrew Python, or user site-packages. Never use `pip install --user`.
+- Add a Python dependency to `environment.yml` (and `backend/requirements*.txt`, which the Docker image uses), then `conda env update -n lacv -f environment.yml --prune`. Never create another Conda environment for this project without explicit approval.
+- Never use Homebrew or `sudo` to install project development dependencies without explicit approval.
+- Node is managed by nvm. JavaScript packages belong in the project and are managed with npm and `package-lock.json`. Never use `npm install -g` for project dependencies.
+- Do not assume Docker exists on the development Mac. Production still uses Docker Compose; do not change the production deployment merely because local development does not use Docker.
+- If tooling is missing from `lacv`, fix the project environment (or report it) rather than silently installing a global workaround.
+- Backend tests: `LACV_TEST_DATABASE_URL=postgresql+psycopg://lims@127.0.0.1:15432/postgres conda run -n lacv python -m pytest` from `backend/`. They create and drop their own databases and never touch the development data.
+
+---
+
 # Docker
 
-Development should start with
-
-docker compose up
+Docker Compose runs production. Local development does not use Docker (see Development Environment).
 
 Production runs on the DGX Spark from ~/code/lacv and is deployed with
 
