@@ -112,7 +112,7 @@ def record_quantity_change(
     process_event_id: int | None = None,
     operator_name: str | None = None,
     notes: str | None = None,
-    assay_id: int | None = None,
+    assay_execution_id: int | None = None,
 ) -> None:
     before = sample.current_quantity
     sample.current_quantity = new_quantity
@@ -127,7 +127,7 @@ def record_quantity_change(
         quantity_before=before,
         quantity_after=new_quantity,
         related_process_event_id=process_event_id,
-        related_assay_id=assay_id,
+        related_assay_execution_id=assay_execution_id,
         event_date=datetime.utcnow(),
         operator_name=operator_name,
         notes=notes,
@@ -143,7 +143,7 @@ def consume(
     operator_name: str | None,
     notes: str | None,
     event_type: str = "consumed",
-    assay_id: int | None = None,
+    assay_execution_id: int | None = None,
 ) -> None:
     """Record a physical removal from sample, in the sample's own unit."""
     if amount is None or sample.current_quantity is None:
@@ -157,7 +157,7 @@ def consume(
         amount, unit = converted, sample.quantity_unit
     if amount > sample.current_quantity:
         raise HTTPException(400, f"Cannot remove {_amount(amount, unit)} from {sample.sample_code}: only {_amount(sample.current_quantity, sample.quantity_unit)} is recorded")
-    record_quantity_change(sample, sample.current_quantity - amount, event_type, db, unit, process_event_id, operator_name, notes, assay_id)
+    record_quantity_change(sample, sample.current_quantity - amount, event_type, db, unit, process_event_id, operator_name, notes, assay_execution_id)
 
 
 def _amount(value: Decimal, unit: str | None) -> str:

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { CornerUpLeft, Refrigerator, Sprout } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { executionHref } from '../../assayResults'
 import { cn } from '@/lib/utils'
 import { QuantityValue, SampleLink } from '../common'
 import { availabilityTitle, SampleAvailability } from './SampleAvailability'
@@ -40,7 +41,7 @@ export function SpecimenState({ sample }: { sample: SampleDetail }) {
               <SampleLink sample={sample.parent} className="text-[13px]" />
               <p className="text-xs text-muted-foreground">
                 {producedBy ? <>via {producedBy.process_type} <span className="font-mono">{producedBy.process_code}</span></>
-                  : producedByAssay ? <>via assay <Link className="font-mono hover:underline" to={`/assay-executions/${producedByAssay.execution_id}`}>{producedByAssay.execution_code}</Link></>
+                  : producedByAssay ? <>via assay <Link className="font-mono hover:underline" to={executionHref(producedByAssay)}>{producedByAssay.execution_name}</Link></>
                   : 'Parent sample'}
               </p>
             </div>

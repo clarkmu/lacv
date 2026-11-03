@@ -298,23 +298,23 @@ Sample page also shows process history (process_events, assay)
     Given a sample with no quantity, no unit, or a ledger that does not match its current quantity
     Then the Sample page shows what is recorded and why no percentage is shown
 
-45. **An assay is defined once and run on many Samples**
-    Given an assay "LACV qPCR (SYBR Green)" with kit, instrument and a CT result
-    When I record it on three different Samples
-    Then the assay's page lists three executions on three Samples
-    And no execution created a new assay
+45. **One execution holds many Samples, each with at most one result**
+    Given the assay "LACV qPCR (SYBR Green)"
+    When I start a new execution, keep or change its generated name, add three Samples by scanning their codes, and save
+    Then the assay's page shows one execution, identified by its ID, with three Sample rows under it
+    And adding the same Sample twice is refused, and nothing is saved if any row is invalid
 
-46. **One execution reports several results**
-    Given a duplex assay that reports LACV CT and RNase P CT
-    When I record it on a Sample with "not detected" and 26.4
-    Then the execution shows both results, one as text and one as a number
-    And I can add, correct, or remove a result until its QC is accepted
+46. **Results are entered later, in place**
+    Given an execution whose Samples have no results yet
+    When I type 31.2 for one Sample and "not detected" for another on the assay's page
+    Then they are saved as a number and as text
+    And the assay's average uses only the numeric results, saying how many it is based on
 
-47. **An assay is imported from a workbook only after a preview**
-    Given an .xlsx workbook with an Assay sheet and a Results sheet
-    When I upload it
-    Then I see the assay it would create, or every problem by sheet and row
-    And nothing is created until I confirm, and a workbook with problems cannot be confirmed
+47. **An execution can come from a workbook**
+    Given an .xlsx workbook with a Samples sheet of sample codes and optional results
+    When I import it into a new execution of the assay
+    Then I see every problem by sheet and row (unknown or repeated samples, invalid results), or the rows fill the new execution
+    And nothing is saved until I save the execution
 
 48. **A batch is edited as a table**
     Given a batch of 18 hospital tubes from 6 subjects

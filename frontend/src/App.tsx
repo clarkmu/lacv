@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useParams } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { SamplesPage } from './pages/SamplesPage'
 import { SamplePage } from './pages/SamplePage'
@@ -13,8 +13,6 @@ import { NewAssayPage } from './pages/NewAssayPage'
 import { AssaysPage } from './pages/AssaysPage'
 import { AssayDefinitionPage } from './pages/AssayDefinitionPage'
 import { AssayDefinitionFormPage } from './pages/AssayDefinitionFormPage'
-import { AssayExecutionPage } from './pages/AssayExecutionPage'
-import { AssayImportPage } from './pages/AssayImportPage'
 import { StorageLocationsPage } from './pages/StorageLocationsPage'
 import { StorageLocationPage } from './pages/StorageLocationPage'
 import { NewStorageLocationPage } from './pages/NewStorageLocationPage'
@@ -36,12 +34,8 @@ export default function App() {
         <Route path="/materials" element={<Navigate to="/samples" replace />} />
         <Route path="/assays" element={<AssaysPage />} />
         <Route path="/assays/new" element={<AssayDefinitionFormPage />} />
-        <Route path="/assays/import" element={<AssayImportPage />} />
+        {/* The assay's workspace: its details, executions, their Samples and results. */}
         <Route path="/assays/:id" element={<AssayDefinitionPage />} />
-        <Route path="/assays/:id/edit" element={<AssayDefinitionFormPage />} />
-        <Route path="/assay-executions/:id" element={<AssayExecutionPage />} />
-        {/* Older links named the execution "assay". */}
-        <Route path="/assay/:id" element={<RedirectToExecution />} />
         <Route path="/storage-locations" element={<StorageLocationsPage />} />
         <Route path="/storage-locations/new" element={<NewStorageLocationPage />} />
         <Route path="/storage-location/:id" element={<StorageLocationPage />} />
@@ -49,8 +43,4 @@ export default function App() {
       </Route>
     </Routes>
   )
-}
-
-function RedirectToExecution() {
-  return <Navigate to={`/assay-executions/${useParams().id}`} replace />
 }

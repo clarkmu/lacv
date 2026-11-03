@@ -220,9 +220,9 @@ class ProcessEventSummary(BaseModel):
     outputs: list[SampleRef] = []
 
 class AssaySummary(BaseModel):
-    """An assay execution as the Sample page lists it."""
-    execution_id: int
-    execution_code: str
+    """An execution this Sample took part in, as the Sample page lists it, with this Sample's result in it."""
+    assay_execution_id: int
+    execution_name: str
     assay_definition_id: int
     assay_name: str
     assay_type: str
@@ -230,7 +230,10 @@ class AssaySummary(BaseModel):
     status: str
     qc_status: str
     assay_date: datetime | None = None
-    result_count: int = 0
+    sample_count: int = 1
+    result_numeric: Decimal | None = None
+    result_text: str | None = None
+    result_unit: str | None = None
 
 class StorageEventBrief(BaseModel):
     storage_event_id: int
@@ -252,7 +255,7 @@ class QuantityEventBrief(BaseModel):
     quantity_before: Decimal | None = None
     quantity_after: Decimal | None = None
     related_process_event_id: int | None = None
-    related_assay_id: int | None = None
+    related_assay_execution_id: int | None = None
     event_date: datetime
     operator_name: str | None = None
     notes: str | None = None
@@ -260,7 +263,7 @@ class QuantityEventBrief(BaseModel):
 class DataFileBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     data_file_id: int
-    assay_id: int | None = None
+    assay_execution_id: int | None = None
     sample_id: int | None = None
     file_type: str
     file_name: str
@@ -274,7 +277,8 @@ class DataFileCreate(BaseModel):
     file_name: str = Field(min_length=1, max_length=255)
     file_location: str = Field(min_length=1, max_length=1000)
     checksum_sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
-    assay_id: int | None = None
+    # An execution this Sample took part in.
+    assay_execution_id: int | None = None
     notes: str | None = None
 
 class SampleAvailability(BaseModel):
@@ -376,58 +380,8 @@ class AliquotCreate(BaseModel):
     operator_name: str | None = None
     notes: str | None = None
 
-class AssayResultBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    assay_result_id: int
-    analyte: str | None = None
-    result_name: str
-    numeric_value: Decimal | None = None
-    text_value: str | None = None
-    unit: str | None = None
-    interpretation: str | None = None
-    qc_status: str
-
-class AssayResultFields(BaseModel):
-    analyte: str | None = Field(default=None, max_length=255)
-    numeric_value: Decimal | None = None
-    text_value: str | None = None
-    unit: str | None = Field(default=None, max_length=50)
-    interpretation: str | None = Field(default=None, max_length=255)
-
-    _tidy = field_validator("analyte", "unit", "interpretation", mode="before")(tidy_text)
-    _tidy_value = field_validator("text_value", mode="before")(tidy_long_text)
-
-class AssayResultCreate(AssayResultFields):
-    """One result of an execution: a number (e.g. a CT of 31.2) or a text value (e.g. "not detected")."""
-    result_name: str = Field(min_length=1, max_length=255)
-    qc_status: str = "not_reviewed"
-
-    _tidy_name = field_validator("result_name", mode="before")(tidy_text)
-
-    @model_validator(mode="after")
-    def needs_a_value(self):
-        if self.numeric_value is None and self.text_value is None:
-            raise ValueError("Enter a value: a number, or text such as \"not detected\"")
-        return self
-
-class AssayResultUpdate(AssayResultFields):
-    result_name: str | None = Field(default=None, min_length=1, max_length=255)
-    qc_status: str | None = None
-
-    _tidy_name = field_validator("result_name", mode="before")(tidy_text)
-
-class ExpectedResult(BaseModel):
-    """A result an execution of the assay reports, e.g. "CT" for analyte "LACV"."""
-    model_config = ConfigDict(from_attributes=True)
-    analyte: str | None = Field(default=None, max_length=255)
-    result_name: str = Field(min_length=1, max_length=255)
-    unit: str | None = Field(default=None, max_length=50)
-    value_type: str = Field(default="either", pattern="^(numeric|text|either)$")
-
-    _tidy = field_validator("analyte", "result_name", "unit", mode="before")(tidy_text)
-
 class AssayDefinitionFields(BaseModel):
-    """What the procedure is. Nothing here is about one execution (who ran it, when, on which Sample)."""
+    """What the procedure is, and the one result each Sample in an execution reports. Nothing about one execution."""
     assay_name: str = Field(min_length=1, max_length=255)
     assay_type: str = Field(min_length=1, max_length=100)
     target: str | None = Field(default=None, max_length=255)
@@ -436,9 +390,11 @@ class AssayDefinitionFields(BaseModel):
     typical_volume: Decimal | None = Field(default=None, gt=0)
     typical_volume_unit: str | None = Field(default=None, max_length=50)
     description: str | None = None
-    expected_results: list[ExpectedResult] = []
+    result_name: str | None = Field(default=None, max_length=255)
+    result_unit: str | None = Field(default=None, max_length=50)
+    result_value_type: str = Field(default="either", pattern="^(numeric|text|either)$")
 
-    _tidy = field_validator("assay_name", "assay_type", "target", "kit", "instrument", "typical_volume_unit", mode="before")(tidy_text)
+    _tidy = field_validator("assay_name", "assay_type", "target", "kit", "instrument", "typical_volume_unit", "result_name", "result_unit", mode="before")(tidy_text)
     _tidy_description = field_validator("description", mode="before")(tidy_long_text)
 
     @model_validator(mode="after")
@@ -462,11 +418,12 @@ class AssayDefinitionUpdate(BaseModel):
     typical_volume: Decimal | None = Field(default=None, gt=0)
     typical_volume_unit: str | None = Field(default=None, max_length=50)
     description: str | None = None
+    result_name: str | None = Field(default=None, max_length=255)
+    result_unit: str | None = Field(default=None, max_length=50)
+    result_value_type: str | None = Field(default=None, pattern="^(numeric|text|either)$")
     is_active: bool | None = None
-    # Replaces the whole list when sent.
-    expected_results: list[ExpectedResult] | None = None
 
-    _tidy = field_validator("assay_name", "assay_type", "target", "kit", "instrument", "typical_volume_unit", mode="before")(tidy_text)
+    _tidy = field_validator("assay_name", "assay_type", "target", "kit", "instrument", "typical_volume_unit", "result_name", "result_unit", mode="before")(tidy_text)
     _tidy_description = field_validator("description", mode="before")(tidy_long_text)
 
 class AssayDefinitionBrief(BaseModel):
@@ -480,89 +437,132 @@ class AssayDefinitionBrief(BaseModel):
     instrument: str | None = None
     typical_volume: Decimal | None = None
     typical_volume_unit: str | None = None
+    result_name: str | None = None
+    result_unit: str | None = None
+    result_value_type: str
     is_active: bool
-    expected_results: list[ExpectedResult] = []
 
 class AssayDefinitionListItem(AssayDefinitionBrief):
+    # Executions, not Sample rows; distinct Samples across them; the latest execution date.
     execution_count: int = 0
     sample_count: int = 0
     last_performed: datetime | None = None
 
-class AssayExecutionBrief(BaseModel):
-    """One execution of an assay on one Sample."""
-    execution_id: int
-    execution_code: str
-    assay_definition_id: int
-    assay_name: str
-    assay_type: str
-    target: str | None = None
+class ExecutionSampleRow(BaseModel):
+    """A Sample in an execution and its result (both result fields empty until a result is entered)."""
+    assay_execution_sample_id: int
     sample: SampleRef
+    result_numeric: Decimal | None = None
+    result_text: str | None = None
+    # From this Sample's quantity ledger, when the execution used some of it.
+    volume_used: Decimal | None = None
+    volume_unit: str | None = None
+
+class AssayExecutionDetail(BaseModel):
+    """One execution of an assay: its details, its Samples with their results, and what it produced."""
+    assay_execution_id: int
+    execution_name: str
+    assay_definition_id: int
     operator_name: str | None = None
     assay_date: datetime | None = None
     status: str
     qc_status: str
-    result_count: int = 0
+    notes: str | None = None
+    samples: list[ExecutionSampleRow] = []
+    output_samples: list[SampleRef] = []
+    data_files: list[DataFileBrief] = []
+
+class NumericResultSummary(BaseModel):
+    """The mean of the numeric results entered so far. Empty and text results are counted, never averaged."""
+    mean: Decimal | None = None
+    numeric_count: int = 0
+    text_count: int = 0
+    empty_count: int = 0
+    unit: str | None = None
+    # False when the assay's result is text, so no mean is meaningful.
+    averageable: bool = True
 
 class AssayDefinitionDetail(AssayDefinitionListItem):
     description: str | None = None
-    source_file_name: str | None = None
-    source_sha256: str | None = None
-    imported_at: datetime | None = None
     created_at: datetime
-    executions: list[AssayExecutionBrief] = []
+    # What a new execution is called unless the user renames it.
+    next_execution_name: str
+    result_summary: NumericResultSummary
+    executions: list[AssayExecutionDetail] = []
 
-class AssayDefinitionImportSource(BaseModel):
-    file_name: str
-    sha256: str
-    sheets: list[str]
-
-class AssayDefinitionImportPreview(BaseModel):
-    """What a workbook would create. Nothing is saved until the same file is confirmed."""
-    source: AssayDefinitionImportSource
-    definition: AssayDefinitionCreate | None = None
-    # Problems block the import; each names where in the workbook it is.
-    problems: list[str] = []
-    can_import: bool
-
-class AssayExecutionCreate(BaseModel):
-    """An assay performed on a Sample: which assay, when, by whom, how much of the Sample it used, and any results."""
-    assay_definition_id: int
-    # Generated (ASSAY-NNN) when omitted.
-    execution_code: str | None = Field(default=None, min_length=1, max_length=100)
-    # "Performed by" in the UI.
-    operator_name: str | None = Field(default=None, max_length=150)
-    assay_date: datetime | None = None
-    # Recording an execution means it was performed; QC review happens afterwards.
-    status: str = "completed"
-    qc_status: str = "not_reviewed"
-    notes: str | None = None
-    # Sample volume the execution used; recorded as a removal on the Sample's quantity ledger.
+class ExecutionSampleCreate(BaseModel):
+    sample_id: int
+    # As typed: a number such as 31.2, or text such as "not detected". Empty means not entered yet.
+    result: str | None = None
+    # Volume of this Sample the execution used; recorded on the Sample's quantity ledger.
     volume_used: Decimal | None = Field(default=None, gt=0)
     # Defaults to the Sample's quantity unit.
     volume_unit: str | None = None
-    results: list[AssayResultCreate] = []
 
-    _tidy = field_validator("execution_code", "operator_name", "volume_unit", mode="before")(tidy_text)
+    _tidy_result = field_validator("result", mode="before")(tidy_long_text)
+    _tidy_unit = field_validator("volume_unit", mode="before")(tidy_text)
+
+class AssayExecutionCreate(BaseModel):
+    """One execution of an assay on one or more Samples, created with all its Samples or not at all."""
+    # Generated (<assay code>-NNN) when omitted.
+    execution_name: str | None = Field(default=None, min_length=1, max_length=100)
+    # "Performed by" in the UI.
+    operator_name: str | None = Field(default=None, max_length=150)
+    assay_date: datetime | None = None
+    status: str = "completed"
+    qc_status: str = "not_reviewed"
+    notes: str | None = None
+    samples: list[ExecutionSampleCreate] = Field(min_length=1, max_length=2000)
+
+    _tidy = field_validator("execution_name", "operator_name", mode="before")(tidy_text)
     _tidy_notes = field_validator("notes", mode="before")(tidy_long_text)
 
 class AssayExecutionUpdate(BaseModel):
+    execution_name: str | None = Field(default=None, min_length=1, max_length=100)
     operator_name: str | None = Field(default=None, max_length=150)
     assay_date: datetime | None = None
     status: str | None = None
     qc_status: str | None = None
     notes: str | None = None
 
-    _tidy = field_validator("operator_name", mode="before")(tidy_text)
+    _tidy = field_validator("execution_name", "operator_name", mode="before")(tidy_text)
     _tidy_notes = field_validator("notes", mode="before")(tidy_long_text)
 
-class AssayExecutionDetail(AssayExecutionBrief):
-    definition: AssayDefinitionBrief
-    notes: str | None = None
+class ExecutionSampleResultUpdate(BaseModel):
+    # As typed; null or blank clears the result.
+    result: str | None = None
+
+    _tidy_result = field_validator("result", mode="before")(tidy_long_text)
+
+class ExecutionImportSource(BaseModel):
+    file_name: str
+    sha256: str
+    sheets: list[str]
+
+class ExecutionImportRow(BaseModel):
+    """One Samples-sheet row, resolved to an existing Sample when its code matches one."""
+    row_number: int
+    sample_code: str | None = None
+    sample: SampleRef | None = None
+    result: str | None = None
     volume_used: Decimal | None = None
     volume_unit: str | None = None
-    results: list[AssayResultBrief] = []
-    output_samples: list[SampleRef] = []
-    data_files: list[DataFileBrief] = []
+    problems: list[str] = []
+
+class ExecutionImportDetails(BaseModel):
+    execution_name: str | None = None
+    assay_date: datetime | None = None
+    operator_name: str | None = None
+    notes: str | None = None
+
+class ExecutionImportPreview(BaseModel):
+    """What a workbook would create. Nothing is saved; the rows are then saved as a new execution."""
+    source: ExecutionImportSource
+    execution: ExecutionImportDetails | None = None
+    rows: list[ExecutionImportRow] = []
+    # Problems block saving; each names the sheet and row it is about.
+    problems: list[str] = []
+    can_import: bool
 
 class StorageSubLocation(StorageLocationBrief):
     """A location inside another, with how many Samples are stored in it and below it."""

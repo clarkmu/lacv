@@ -33,13 +33,13 @@ const SAMPLE: SampleDetail = {
     { process_event_id: 10, process_code: 'EXT-1', process_type: 'RNA extraction', status: 'completed', operator_name: 'Ana', started_at: '2026-10-01T09:00:00', completed_at: null, role: 'output', inputs: [ref(1, 'S-001')], outputs: [ref(2, 'S-001-RNA')] },
   ],
   assays: [
-    { execution_id: 20, execution_code: 'QPCR-1', assay_definition_id: 4, assay_name: 'qPCR', assay_type: 'qPCR', target: 'Gene X', status: 'completed', qc_status: 'accepted', assay_date: '2026-10-03T10:00:00', result_count: 2 },
+    { assay_execution_id: 20, execution_name: 'QPCR-1', assay_definition_id: 4, assay_name: 'qPCR', assay_type: 'qPCR', target: 'Gene X', status: 'completed', qc_status: 'accepted', assay_date: '2026-10-03T10:00:00', sample_count: 3, result_numeric: '31.20000000', result_text: null, result_unit: 'cycles' },
   ],
   storage_events: [
     { storage_event_id: 30, event_type: 'stored', event_date: '2026-10-01T09:30:00', from_location_id: null, to_location_id: 7, from_location_code: null, to_location_code: 'BOX-7', operator_name: null, notes: null },
   ],
   quantity_events: [
-    { quantity_event_id: 40, event_type: 'consumed', quantity_change: '-5.000000', quantity_unit: 'uL', quantity_before: '20.000000', quantity_after: '15.000000', related_process_event_id: null, related_assay_id: null, event_date: '2026-10-02T12:00:00', operator_name: null, notes: null },
+    { quantity_event_id: 40, event_type: 'consumed', quantity_change: '-5.000000', quantity_unit: 'uL', quantity_before: '20.000000', quantity_after: '15.000000', related_process_event_id: null, related_assay_execution_id: null, event_date: '2026-10-02T12:00:00', operator_name: null, notes: null },
   ],
   data_files: [],
   availability: { state: 'tracked', unit: 'uL', dimension: 'volume', starting_quantity: '20.000000', available_quantity: '15.000000', removed_quantity: '5.000000', added_quantity: '0', percent_remaining: 75, problems: [] },

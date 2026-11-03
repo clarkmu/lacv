@@ -8,7 +8,7 @@ import pytest
 from conftest import alembic, api_client, build_current_database, query, run_sql
 
 # The newest revision: upgrading runs every migration after the fold, too.
-HEAD = "20261101_0006"
+HEAD = "20261103_0007"
 
 MATERIAL_SNAPSHOT = """
     SELECT m.material_code, s.sample_code, t.type_name, m.material_label, m.material_subtype, m.current_quantity,
@@ -46,7 +46,8 @@ LINK_SNAPSHOTS = {
     ),
     "assays": (
         "SELECT a.assay_instance_code, s.sample_code FROM assays a JOIN materials m USING (material_id) JOIN samples s ON s.sample_id = m.sample_id ORDER BY 1",
-        "SELECT a.assay_instance_code, s.sample_code FROM assays a JOIN samples s USING (sample_id) ORDER BY 1",
+        # Since 20261103_0007 an execution's Samples are rows of assay_execution_samples.
+        "SELECT e.execution_name, s.sample_code FROM assay_executions e JOIN assay_execution_samples x USING (assay_execution_id) JOIN samples s ON s.sample_id = x.sample_id ORDER BY 1",
     ),
     "storage events": (
         "SELECT e.storage_event_id, s.sample_code, e.to_location_id FROM storage_events e JOIN materials m USING (material_id) JOIN samples s ON s.sample_id = m.sample_id ORDER BY 1",
@@ -205,7 +206,7 @@ def test_legacy_material_codes_find_their_sample_through_the_api(legacy_database
         detail = client.get(f"/samples/{found.json()['sample_id']}").json()
         assert [item["material_code"] for item in detail["legacy_identifiers"]] == ["MAT-010-CHILD"]
         assert detail["legacy_codes"] == ["MAT-010-CHILD"]
-        assert [assay["execution_code"] for assay in detail["assays"]] == ["ASSAY-010"]
+        assert [assay["execution_name"] for assay in detail["assays"]] == ["ASSAY-010"]
         assert detail["parent"]["sample_code"] == "SAMPLE-010-ROOT"
 
         reused = client.post("/samples", json={"sample_code": "MAT-010-ROOT"})

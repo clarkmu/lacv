@@ -117,10 +117,10 @@ export type ProcessEventSummary = {
   outputs: SampleRef[]
 }
 
-/** An assay execution as the Sample page lists it. */
+/** An execution this Sample took part in, as the Sample page lists it, with this Sample's result in it. */
 export type AssaySummary = {
-  execution_id: number
-  execution_code: string
+  assay_execution_id: number
+  execution_name: string
   assay_definition_id: number
   assay_name: string
   assay_type: string
@@ -128,7 +128,10 @@ export type AssaySummary = {
   status: string
   qc_status: string
   assay_date: string | null
-  result_count: number
+  sample_count?: number
+  result_numeric?: string | null
+  result_text?: string | null
+  result_unit?: string | null
 }
 
 export type StorageEvent = {
@@ -151,7 +154,7 @@ export type QuantityEvent = {
   quantity_before: string | null
   quantity_after: string | null
   related_process_event_id: number | null
-  related_assay_id: number | null
+  related_assay_execution_id: number | null
   event_date: string
   operator_name: string | null
   notes: string | null
@@ -159,7 +162,7 @@ export type QuantityEvent = {
 
 export type DataFile = {
   data_file_id: number
-  assay_id: number | null
+  assay_execution_id: number | null
   sample_id: number | null
   file_type: string
   file_name: string
@@ -237,26 +240,9 @@ export type ProcessEventDetail = {
   outputs: SampleRef[]
 }
 
-export type AssayResult = {
-  assay_result_id: number
-  analyte: string | null
-  result_name: string
-  numeric_value: string | null
-  text_value: string | null
-  unit: string | null
-  interpretation: string | null
-  qc_status: string
-}
+export type ResultValueType = 'numeric' | 'text' | 'either'
 
-/** A result an execution of the assay reports, e.g. "CT" for analyte "LACV". */
-export type ExpectedResult = {
-  analyte: string | null
-  result_name: string
-  unit: string | null
-  value_type: 'numeric' | 'text' | 'either'
-}
-
-/** A reusable assay procedure. */
+/** A reusable assay procedure and the one result each Sample in an execution reports. */
 export type AssayDefinition = {
   assay_definition_id: number
   assay_code: string
@@ -267,53 +253,64 @@ export type AssayDefinition = {
   instrument: string | null
   typical_volume: string | null
   typical_volume_unit: string | null
+  result_name: string | null
+  result_unit: string | null
+  result_value_type: ResultValueType
   is_active: boolean
-  expected_results: ExpectedResult[]
 }
 
 export type AssayDefinitionListItem = AssayDefinition & {
+  /** Executions, not Sample rows. */
   execution_count: number
+  /** Distinct Samples across the executions. */
   sample_count: number
   last_performed: string | null
 }
 
-/** One execution of an assay on one Sample. */
-export type AssayExecution = {
-  execution_id: number
-  execution_code: string
-  assay_definition_id: number
-  assay_name: string
-  assay_type: string
-  target: string | null
+/** A Sample in an execution and its one result (both result fields null until entered). */
+export type ExecutionSample = {
+  assay_execution_sample_id: number
   sample: SampleRef
+  result_numeric: string | null
+  result_text: string | null
+  volume_used: string | null
+  volume_unit: string | null
+}
+
+/** One execution (run) of an assay, holding one or more Samples. */
+export type AssayExecution = {
+  assay_execution_id: number
+  execution_name: string
+  assay_definition_id: number
   operator_name: string | null
   assay_date: string | null
   status: string
   qc_status: string
-  result_count: number
-}
-
-export type AssayDefinitionDetail = AssayDefinitionListItem & {
-  description: string | null
-  source_file_name: string | null
-  source_sha256: string | null
-  imported_at: string | null
-  created_at: string
-  executions: AssayExecution[]
-}
-
-export type AssayExecutionDetail = AssayExecution & {
-  definition: AssayDefinition
   notes: string | null
-  volume_used: string | null
-  volume_unit: string | null
-  results: AssayResult[]
+  samples: ExecutionSample[]
   output_samples: SampleRef[]
   data_files: DataFile[]
 }
 
+/** The mean of the numeric results so far; empty and text results are counted but never averaged. */
+export type NumericResultSummary = {
+  mean: string | null
+  numeric_count: number
+  text_count: number
+  empty_count: number
+  unit: string | null
+  averageable: boolean
+}
+
+export type AssayDefinitionDetail = AssayDefinitionListItem & {
+  description: string | null
+  created_at: string
+  next_execution_name: string
+  result_summary: NumericResultSummary
+  executions: AssayExecution[]
+}
+
 export type AssayDefinitionDraft = {
-  assay_code?: string | null
   assay_name: string
   assay_type: string
   target: string | null
@@ -322,12 +319,33 @@ export type AssayDefinitionDraft = {
   typical_volume: string | null
   typical_volume_unit: string | null
   description: string | null
-  expected_results: ExpectedResult[]
+  result_name: string | null
+  result_unit: string | null
+  result_value_type: ResultValueType
 }
 
-export type AssayImportPreview = {
+/** A Sample row of a new execution, as sent: the result as typed (blank for not yet known). */
+export type ExecutionSampleDraft = {
+  sample_id: number
+  result: string | null
+  volume_used: string | null
+  volume_unit: string | null
+}
+
+export type ExecutionImportRow = {
+  row_number: number
+  sample_code: string | null
+  sample: SampleRef | null
+  result: string | null
+  volume_used: string | null
+  volume_unit: string | null
+  problems: string[]
+}
+
+export type ExecutionImportPreview = {
   source: { file_name: string; sha256: string; sheets: string[] }
-  definition: AssayDefinitionDraft | null
+  execution: { execution_name: string | null; assay_date: string | null; operator_name: string | null; notes: string | null } | null
+  rows: ExecutionImportRow[]
   problems: string[]
   can_import: boolean
 }

@@ -19,25 +19,25 @@ const SAMPLE = {
 
 const DEFINITIONS = [
   {
-    assay_definition_id: 3, assay_code: 'LACV-RNASEP-DUPLEX', assay_name: 'LACV / RNase P duplex', assay_type: 'qPCR', target: 'LACV, RNase P',
+    assay_definition_id: 3, assay_code: 'LACV-RNASEP-DUPLEX', assay_name: 'LACV / RNase P duplex', assay_type: 'qPCR', target: 'LACV',
     kit: 'TaqPath', instrument: 'QuantStudio 5', typical_volume: '5.000000', typical_volume_unit: 'uL', is_active: true, execution_count: 4, sample_count: 4, last_performed: null,
-    expected_results: [
-      { analyte: 'LACV', result_name: 'CT', unit: 'cycles', value_type: 'either' },
-      { analyte: 'RNase P', result_name: 'CT', unit: 'cycles', value_type: 'numeric' },
-    ],
+    result_name: 'LACV CT', result_unit: 'cycles', result_value_type: 'either',
   },
   {
     assay_definition_id: 4, assay_code: 'RNA-QUBIT', assay_name: 'RNA quantification', assay_type: 'Quantification', target: 'RNA',
-    kit: null, instrument: null, typical_volume: null, typical_volume_unit: null, is_active: true, execution_count: 0, sample_count: 0, last_performed: null, expected_results: [],
+    kit: null, instrument: null, typical_volume: null, typical_volume_unit: null, is_active: true, execution_count: 0, sample_count: 0, last_performed: null,
+    result_name: 'RNA concentration', result_unit: 'ng/uL', result_value_type: 'numeric',
   },
 ]
 
 let posts: Record<string, unknown>[] = []
+let posted: string[] = []
 let respond: (body: Record<string, unknown>) => Promise<Response>
 
 function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
   const url = new URL(String(input), 'http://lacv.test')
-  if (init?.method === 'POST' && url.pathname === '/api/samples/5/assay-executions') {
+  if (init?.method === 'POST' && /^\/api\/assay-definitions\/\d+\/executions$/.test(url.pathname)) {
+    posted.push(url.pathname)
     const body = JSON.parse(String(init.body))
     posts.push(body)
     return respond(body)
@@ -49,7 +49,8 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
 }
 
 function Landing() {
-  return <p data-testid="landed">{useLocation().pathname}</p>
+  const location = useLocation()
+  return <p data-testid="landed">{location.pathname + location.hash}</p>
 }
 
 let container: HTMLDivElement
@@ -57,7 +58,8 @@ let root: Root
 
 beforeEach(async () => {
   posts = []
-  respond = () => Promise.resolve(Response.json({ execution_id: 77, assay_definition_id: 3 }, { status: 201 }))
+  posted = []
+  respond = () => Promise.resolve(Response.json({ assay_execution_id: 77, assay_definition_id: 4 }, { status: 201 }))
   vi.stubGlobal('fetch', vi.fn(fakeFetch))
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -131,13 +133,13 @@ test('the page is about one Sample and shows how much of it is available', () =>
   expect(container.querySelector('a[href="/assays/new"]')?.textContent).toContain('Define a new assay')
 })
 
-test('choosing an assay lays out its results and suggests its typical volume', async () => {
+test('choosing an assay names its one result and suggests its typical volume', async () => {
   await choose('3')
 
   expect(field('#volume-used').value).toBe('5')
   expect(container.textContent).toContain('Typical for this assay: 5 uL')
-  expect(byLabel('LACV CT value')).toBeTruthy()
-  expect(byLabel('RNase P CT value')).toBeTruthy()
+  expect(container.querySelector('label[for="assay-result"]')?.textContent).toContain('LACV CT')
+  expect(container.textContent).toContain('cycles')
   expect(container.textContent).toContain('TaqPath')
 })
 
@@ -152,27 +154,22 @@ test('recording sends the workflow values and lands on the new assay', async () 
   await act(async () => submitButton().click())
   await waitFor(() => container.querySelector('[data-testid="landed"]') !== null)
 
+  expect(posted).toEqual(['/api/assay-definitions/4/executions'])
   expect(posts).toEqual([{
-    assay_definition_id: 4, assay_date: '2026-10-30T14:05',
-    operator_name: 'Michael Clark', volume_used: '20', volume_unit: 'uL', notes: 'Plate 3', results: [],
+    assay_date: '2026-10-30T14:05', operator_name: 'Michael Clark', notes: 'Plate 3',
+    samples: [{ sample_id: 5, result: null, volume_used: '20', volume_unit: 'uL' }],
   }])
-  expect(container.textContent).toBe('/assay-executions/77')
+  expect(container.textContent, 'the new execution, on its assay\'s page').toBe('/assays/4#execution-77')
 })
 
-test('results typed on the form are sent with the execution; blank ones are left for later', async () => {
+test('the result is sent as typed with the sample; the backend decides number or text', async () => {
   await fillAssay('3')
-  await fill('[aria-label="LACV CT value"]', 'not detected')
-  await fill('[aria-label="LACV CT interpretation"]', 'negative')
-  await fill('[aria-label="RNase P CT value"]', '26.4')
+  await fill('#assay-result', 'not detected')
 
   await act(async () => submitButton().click())
   await waitFor(() => posts.length === 1)
 
-  expect(posts[0].results).toEqual([
-    { analyte: 'LACV', result_name: 'CT', numeric_value: null, text_value: 'not detected', unit: 'cycles', interpretation: 'negative', qc_status: 'not_reviewed' },
-    { analyte: 'RNase P', result_name: 'CT', numeric_value: '26.4', text_value: null, unit: 'cycles', interpretation: null, qc_status: 'not_reviewed' },
-  ])
-  expect(posts[0].volume_used).toBe('5')
+  expect(posts[0].samples).toEqual([{ sample_id: 5, result: 'not detected', volume_used: '5', volume_unit: 'uL' }])
 })
 
 test('a person not in the suggestions is submitted as typed', async () => {
@@ -183,11 +180,11 @@ test('a person not in the suggestions is submitted as typed', async () => {
   await waitFor(() => posts.length === 1)
 
   expect(posts[0].operator_name).toBe('Rosalind Franklin')
-  expect(posts[0].volume_used).toBeNull()
+  expect((posts[0].samples as { volume_used: unknown }[])[0].volume_used).toBeNull()
 })
 
 test('a refused volume is explained next to the volume field and nothing navigates', async () => {
-  respond = () => Promise.resolve(Response.json({ detail: [{ loc: ['body', 'volume_used'], msg: 'Cannot remove 150 uL from S-005: only 100 uL is recorded', type: 'value_error' }] }, { status: 422 }))
+  respond = () => Promise.resolve(Response.json({ detail: [{ loc: ['body', 'samples', 0, 'volume_used'], msg: 'Cannot remove 150 uL from S-005: only 100 uL is recorded', type: 'value_error' }] }, { status: 422 }))
   await fillAssay()
   await fill('#volume-used', '150')
 
@@ -202,7 +199,7 @@ test('a refused volume is explained next to the volume field and nothing navigat
 
 test('the record button cannot send the assay twice', async () => {
   let release: () => void = () => {}
-  respond = () => new Promise(resolve => { release = () => resolve(Response.json({ execution_id: 77, assay_definition_id: 4 }, { status: 201 })) })
+  respond = () => new Promise(resolve => { release = () => resolve(Response.json({ assay_execution_id: 77, assay_definition_id: 4 }, { status: 201 })) })
   await fillAssay()
 
   // Two clicks before React has re-rendered, as a fast double click would be.

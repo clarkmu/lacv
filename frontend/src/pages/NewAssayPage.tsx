@@ -1,7 +1,7 @@
 import { FormEvent, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, FlaskConical, Plus, X } from 'lucide-react'
+import { ArrowRight, FlaskConical, Plus } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,7 @@ import { Field, FieldError, Section } from '../components/form'
 import { SuggestInput } from '../components/SuggestInput'
 import { formatQuantity } from '../format'
 import type { AssayDefinition, SampleAvailability, SampleDetail } from '../types'
-import { resultLabel, resultPayload } from '../assayResults'
+import { executionHref } from '../assayResults'
 
 /** Recording an assay that was performed on a Sample: what was run, when and by whom, and how much of the Sample it used. */
 export function NewAssayPage() {
@@ -39,7 +39,7 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
   const [performedBy, setPerformedBy] = useState('')
   const [volume, setVolume] = useState('')
   const [volumeUnit, setVolumeUnit] = useState(sample.quantity_unit ?? '')
-  const [results, setResults] = useState<ResultEntry[]>([])
+  const [result, setResult] = useState('')
   const [notes, setNotes] = useState('')
 
   const definitionList = definitions.data ?? []
@@ -51,13 +51,6 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
   function chooseDefinition(id: string) {
     setDefinitionId(id)
     const definition = definitionList.find(row => String(row.assay_definition_id) === id)
-    // Lay out the results this assay reports, keeping anything already typed for the same result.
-    setResults(current => [
-      ...(definition?.expected_results ?? []).map(expected => current.find(entry => entry.result_name === expected.result_name && entry.analyte === (expected.analyte ?? '')) ?? {
-        analyte: expected.analyte ?? '', result_name: expected.result_name, unit: expected.unit ?? '', value: '', interpretation: '', expected: true,
-      }),
-      ...current.filter(entry => !entry.expected),
-    ])
     if (definition?.typical_volume && canUseVolume && !volume) {
       setVolume(String(Number(definition.typical_volume)))
       setVolumeUnit(definition.typical_volume_unit ?? volumeUnit)
@@ -65,14 +58,12 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
   }
 
   const record = useMutation({
-    mutationFn: () => api.recordAssayExecution(sample.sample_id, {
-      assay_definition_id: definitionId ? Number(definitionId) : null,
+    // A new execution of the chosen assay holding this one Sample; more samples can join it on the assay's page.
+    mutationFn: () => api.createAssayExecution(Number(definitionId), {
       assay_date: date ? `${date}T${time || '00:00'}` : null,
       operator_name: performedBy || null,
-      volume_used: volume ? volume : null,
-      volume_unit: volume ? volumeUnit || null : null,
       notes: notes || null,
-      results: results.filter(entry => entry.value.trim() && entry.result_name.trim()).map(entry => resultPayload({ ...entry, qc_status: 'not_reviewed' })),
+      samples: [{ sample_id: sample.sample_id, result: result.trim() || null, volume_used: volume ? volume : null, volume_unit: volume ? volumeUnit || null : null }],
     }),
     onSuccess: execution => {
       client.invalidateQueries({ queryKey: ['sample', String(sample.sample_id)] })
@@ -80,12 +71,13 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
       client.invalidateQueries({ queryKey: ['assay-definitions'] })
       client.invalidateQueries({ queryKey: ['assay-definition', String(execution.assay_definition_id)] })
       client.invalidateQueries({ queryKey: ['assay-performed-by'] })
-      navigate(`/assay-executions/${execution.execution_id}`)
+      navigate(executionHref(execution))
     },
     onSettled: () => { submitting.current = false },
   })
   const fieldErrors = record.error instanceof ApiError ? record.error.fieldErrors : {}
-  const resultError = Object.entries(fieldErrors).find(([key]) => key.startsWith('results.'))?.[1]
+  // Errors about the one sample row arrive as samples.0.<field>.
+  const rowError = (field: string) => fieldErrors[`samples.0.${field}`]
   const otherError = record.error && Object.keys(fieldErrors).length === 0 ? record.error.message : null
 
   function submit(event: FormEvent) {
@@ -95,7 +87,6 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
     record.mutate()
   }
 
-  const setEntry = (index: number, changes: Partial<ResultEntry>) => setResults(current => current.map((entry, i) => (i === index ? { ...entry, ...changes } : entry)))
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -164,7 +155,7 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
 
         <Section title="Sample usage" description={<>Volume of <span className="font-mono">{sample.sample_code}</span> this execution used. It is deducted from the sample's available quantity.</>}>
           <div className="grid items-start gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
-            <Field label="Volume used" htmlFor="volume-used" optional hint={chosen?.typical_volume ? `Typical for this assay: ${formatQuantity(chosen.typical_volume, chosen.typical_volume_unit)}` : undefined} error={fieldErrors.volume_used}>
+            <Field label="Volume used" htmlFor="volume-used" optional hint={chosen?.typical_volume ? `Typical for this assay: ${formatQuantity(chosen.typical_volume, chosen.typical_volume_unit)}` : undefined} error={rowError('volume_used')}>
               <div className="flex">
                 <Input
                   id="volume-used"
@@ -175,7 +166,7 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
                   disabled={!canUseVolume}
                   value={volume}
                   onChange={event => setVolume(event.target.value)}
-                  aria-invalid={Boolean(fieldErrors.volume_used) || undefined}
+                  aria-invalid={Boolean(rowError('volume_used')) || undefined}
                   className="h-8 rounded-r-none text-right text-[13px] tabular-nums"
                 />
                 <Input aria-label="Volume unit" disabled={!canUseVolume} value={volumeUnit} onChange={event => setVolumeUnit(event.target.value)} className="h-8 w-20 rounded-l-none border-l-0 text-[13px]" />
@@ -185,33 +176,13 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
           </div>
         </Section>
 
-        <Section title="Results" description="Enter what you have now; leave a value blank to add it later on the execution page. A number is stored as a number; text such as “not detected” as text.">
-          {results.length ? (
-            <table className="w-full text-[13px]">
-              <thead className="text-left text-xs text-muted-foreground">
-                <tr><th className="pb-1 font-medium">Result</th><th className="pb-1 font-medium">Value</th><th className="pb-1 font-medium">Unit</th><th className="pb-1 font-medium">Interpretation</th><th className="sr-only">Remove</th></tr>
-              </thead>
-              <tbody>
-                {results.map((entry, index) => (
-                  <tr key={index}>
-                    <td className="py-0.5 pr-2">
-                      {entry.expected
-                        ? <span className="font-medium">{entry.analyte && <span className="font-normal text-muted-foreground">{entry.analyte} </span>}{entry.result_name}</span>
-                        : <input aria-label={`Result name ${index + 1}`} value={entry.result_name} onChange={event => setEntry(index, { result_name: event.target.value })} placeholder="Result name" className={cn(inputClass, 'w-full')} />}
-                    </td>
-                    <td className="py-0.5 pr-2"><input aria-label={`${resultLabel(entry) || 'Result'} value`} value={entry.value} onChange={event => setEntry(index, { value: event.target.value })} placeholder="31.2 or not detected" className={cn(inputClass, 'w-40 text-right tabular-nums')} /></td>
-                    <td className="py-0.5 pr-2"><input aria-label={`${resultLabel(entry) || 'Result'} unit`} value={entry.unit} onChange={event => setEntry(index, { unit: event.target.value })} className={cn(inputClass, 'w-20')} /></td>
-                    <td className="py-0.5 pr-2"><input aria-label={`${resultLabel(entry) || 'Result'} interpretation`} value={entry.interpretation} onChange={event => setEntry(index, { interpretation: event.target.value })} placeholder="e.g. negative" className={cn(inputClass, 'w-full')} /></td>
-                    <td className="py-0.5 text-right">
-                      {!entry.expected && <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Remove result ${index + 1}`} onClick={() => setResults(current => current.filter((_, i) => i !== index))}><X aria-hidden="true" /></Button>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : <p className="text-xs text-muted-foreground">{chosen ? 'This assay lists no results.' : 'Choose an assay to lay out its results.'}</p>}
-          <Button type="button" variant="ghost" size="sm" className="mt-1 text-primary hover:text-primary" onClick={() => setResults(current => [...current, { analyte: '', result_name: '', unit: '', value: '', interpretation: '', expected: false }])}><Plus aria-hidden="true" />Add another result</Button>
-          <FieldError message={resultError} />
+        <Section title="Result" description="Leave it blank if it is not known yet; it can be entered later on the assay's page. A number is stored as a number; text such as “not detected” as text.">
+          <Field label={chosen?.result_name ?? 'Result'} htmlFor="assay-result" optional error={rowError('result')}>
+            <div className="flex items-center gap-2">
+              <Input id="assay-result" value={result} onChange={event => setResult(event.target.value)} placeholder="31.2 or not detected" aria-invalid={Boolean(rowError('result')) || undefined} className="h-8 w-48 text-[13px] tabular-nums" />
+              {chosen?.result_unit && <span className="text-xs text-muted-foreground">{chosen.result_unit}</span>}
+            </div>
+          </Field>
         </Section>
 
         <Section title="Details" description="Anything a colleague would need to interpret this run.">
@@ -221,7 +192,7 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
         </Section>
 
         <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/40 px-4 py-3">
-          <p className="text-xs text-muted-foreground">The execution gets the next ASSAY code. Status is completed and QC starts as not reviewed; both can be changed on the execution page.</p>
+          <p className="text-xs text-muted-foreground">The execution is named after the assay (for example LACV-QPCR-SYBR-013) and can be renamed on the assay's page. Status is completed and QC starts as not reviewed; both can be changed on the execution page.</p>
           <div className="flex items-center gap-2">
             {otherError && <p role="alert" className="text-xs text-destructive">{otherError}</p>}
             <Button asChild variant="ghost" size="sm"><Link to={`/sample/${sample.sample_id}`}>Cancel</Link></Button>
@@ -233,15 +204,13 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
   )
 }
 
-type ResultEntry = { analyte: string; result_name: string; unit: string; value: string; interpretation: string; expected: boolean }
-
 function DefinitionSummary({ definition }: { definition: AssayDefinition }) {
   const items: [string, ReactNode][] = [
     ['Type', definition.assay_type],
     ['Target', definition.target],
     ['Kit', definition.kit],
     ['Instrument', definition.instrument],
-    ['Reports', definition.expected_results.map(resultLabel).join(', ')],
+    ['Result', definition.result_name && `${definition.result_name}${definition.result_unit ? ` (${definition.result_unit})` : ''}`],
   ]
   return (
     <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
@@ -288,7 +257,7 @@ const STEPS = [
   { label: 'Sample', here: true },
   { label: 'Assay performed', here: true },
   { label: 'Volume used', here: true },
-  { label: 'Results', here: true },
+  { label: 'Result', here: true },
   { label: 'Derived samples', here: false },
 ]
 
@@ -301,7 +270,7 @@ function WorkflowSteps() {
           <span className={cn('rounded-sm px-1.5 py-0.5', step.here ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground')}>{step.label}</span>
         </li>
       ))}
-      <li className="ml-1 text-muted-foreground">· more results and derived samples can follow on the execution page</li>
+      <li className="ml-1 text-muted-foreground">· the execution opens on its assay's page, where more samples can join it</li>
     </ol>
   )
 }

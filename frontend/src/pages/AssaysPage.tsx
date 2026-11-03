@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { FileSpreadsheet, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -8,7 +8,6 @@ import { api } from '../api'
 import { ListTable } from '../components/ListTable'
 import { errorClass, PageHeader, QuantityValue, SecondaryCode, StatusBadge } from '../components/common'
 import { formatDateTime } from '../format'
-import { resultLabel } from '../assayResults'
 import type { AssayDefinitionListItem } from '../types'
 
 /** The assays the lab performs: reusable procedures, each run on many Samples. */
@@ -24,9 +23,8 @@ export function AssaysPage() {
     <section>
       <PageHeader
         title="Assays"
-        description="Procedures the lab performs. Define an assay once, then record it on any Sample from that Sample's page."
+        description="Procedures the lab performs. Open an assay to run it on one or more samples and enter their results."
         actions={<>
-          <Button asChild variant="outline" size="sm"><Link to="/assays/import"><FileSpreadsheet aria-hidden="true" />Import from XLSX</Link></Button>
           <Button asChild size="sm"><Link to="/assays/new"><Plus aria-hidden="true" />New assay</Link></Button>
         </>}
       />
@@ -50,8 +48,8 @@ export function AssaysPage() {
           { key: 'assay_type', label: 'Type', value: definition => definition.assay_type },
           { key: 'target', label: 'Target', value: definition => definition.target },
           {
-            key: 'results', label: 'Reports', value: definition => definition.expected_results.map(resultLabel).join(', '),
-            render: definition => <span className="text-muted-foreground">{definition.expected_results.map(resultLabel).join(', ')}</span>,
+            key: 'result', label: 'Result', value: definition => definition.result_name,
+            render: definition => <span className="text-muted-foreground">{definition.result_name}{definition.result_unit && ` (${definition.result_unit})`}</span>,
           },
           { key: 'kit', label: 'Kit', value: definition => definition.kit },
           { key: 'instrument', label: 'Instrument', value: definition => definition.instrument },

@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '../api'
+import { executionHref, resultText } from '../assayResults'
 import { errorClass, inputClass, Panel, SecondaryCode, StatusBadge } from '../components/common'
 import { SampleActivity } from '../components/sample/SampleActivity'
 import { SampleIdentity } from '../components/sample/SampleIdentity'
@@ -76,18 +77,19 @@ function SampleAssays({ sample }: { sample: SampleDetail }) {
     >
       {sample.generated_by_assays.length > 0 && (
         <p className="border-b px-3 py-2 text-xs text-muted-foreground">
-          Produced by assay {sample.generated_by_assays.map(assay => <Link key={assay.execution_id} className="font-mono text-primary hover:underline" to={`/assay-executions/${assay.execution_id}`}>{assay.execution_code}</Link>)}
+          Produced by assay {sample.generated_by_assays.map(assay => <Link key={assay.assay_execution_id} className="font-mono text-primary hover:underline" to={executionHref(assay)}>{assay.execution_name}</Link>)}
         </p>
       )}
       {sample.assays.length ? (
         <CompactTable
-          head={['Execution', 'Assay', 'Type', 'Date', 'Status', 'QC', 'Results']}
+          head={['Execution', 'Assay', 'Result', 'Date', 'Status', 'QC', 'Samples']}
           numericColumns={[6]}
           rows={sample.assays.map(assay => [
-            <Link key="code" className="font-mono font-medium text-primary hover:underline" to={`/assay-executions/${assay.execution_id}`}>{assay.execution_code}</Link>,
+            <Link key="code" className="font-mono font-medium text-primary hover:underline" to={executionHref(assay)}>{assay.execution_name}</Link>,
             <Link key="assay" className="hover:text-primary hover:underline" to={`/assays/${assay.assay_definition_id}`}>{assay.assay_name}</Link>,
-            assay.assay_type, <span key="date" className="text-muted-foreground tabular-nums">{formatDateTime(assay.assay_date)}</span>,
-            <StatusBadge key="status" status={assay.status} />, <StatusBadge key="qc" status={assay.qc_status} />, assay.result_count,
+            resultText(assay) ? <span key="result" className="tabular-nums">{resultText(assay)}{assay.result_unit && <span className="text-muted-foreground"> {assay.result_unit}</span>}</span> : <span key="result" className="text-muted-foreground">not entered</span>,
+            <span key="date" className="text-muted-foreground tabular-nums">{formatDateTime(assay.assay_date)}</span>,
+            <StatusBadge key="status" status={assay.status} />, <StatusBadge key="qc" status={assay.qc_status} />, assay.sample_count ?? 1,
           ])}
         />
       ) : <p className="px-3 py-3 text-sm text-muted-foreground">No assays on this sample.</p>}
@@ -97,12 +99,12 @@ function SampleAssays({ sample }: { sample: SampleDetail }) {
 
 function DataFiles({ sample }: { sample: SampleDetail }) {
   const client = useQueryClient()
-  const [draft, setDraft] = useState({ file_name: '', file_type: '', file_location: '', assay_id: '' })
+  const [draft, setDraft] = useState({ file_name: '', file_type: '', file_location: '', assay_execution_id: '' })
   const attach = useMutation({
     mutationFn: () => api.attachDataFile(sample.sample_id, {
-      file_name: draft.file_name, file_type: draft.file_type, file_location: draft.file_location, assay_id: draft.assay_id ? Number(draft.assay_id) : null,
+      file_name: draft.file_name, file_type: draft.file_type, file_location: draft.file_location, assay_execution_id: draft.assay_execution_id ? Number(draft.assay_execution_id) : null,
     }),
-    onSuccess: data => { client.setQueryData(['sample', String(sample.sample_id)], data); setDraft({ file_name: '', file_type: '', file_location: '', assay_id: '' }) },
+    onSuccess: data => { client.setQueryData(['sample', String(sample.sample_id)], data); setDraft({ file_name: '', file_type: '', file_location: '', assay_execution_id: '' }) },
   })
 
   function submit(event: FormEvent) {
@@ -118,7 +120,7 @@ function DataFiles({ sample }: { sample: SampleDetail }) {
           rows={sample.data_files.map(file => [
             <span key="name" className="inline-flex items-center gap-1.5"><FileText aria-hidden="true" className="size-3.5 text-muted-foreground" />{file.file_name}</span>,
             file.file_type, <SecondaryCode key="loc">{file.file_location}</SecondaryCode>,
-            sample.assays.find(assay => assay.execution_id === file.assay_id)?.execution_code ?? '', <span key="added" className="text-muted-foreground tabular-nums">{formatDateTime(file.created_at)}</span>,
+            sample.assays.find(assay => assay.assay_execution_id === file.assay_execution_id)?.execution_name ?? '', <span key="added" className="text-muted-foreground tabular-nums">{formatDateTime(file.created_at)}</span>,
           ])}
         />
       ) : <p className="px-3 pt-3 text-sm text-muted-foreground">No files attached.</p>}
@@ -126,9 +128,9 @@ function DataFiles({ sample }: { sample: SampleDetail }) {
         <input required placeholder="File name" value={draft.file_name} onChange={e => setDraft(d => ({ ...d, file_name: e.target.value }))} className={inputClass} />
         <input required placeholder="Type" value={draft.file_type} onChange={e => setDraft(d => ({ ...d, file_type: e.target.value }))} className={`${inputClass} w-28`} />
         <input required placeholder="Location / path" value={draft.file_location} onChange={e => setDraft(d => ({ ...d, file_location: e.target.value }))} className={`${inputClass} min-w-56 flex-1 font-mono`} />
-        <select value={draft.assay_id} onChange={e => setDraft(d => ({ ...d, assay_id: e.target.value }))} className={inputClass}>
-          <option value="">No assay</option>
-          {sample.assays.map(assay => <option key={assay.execution_id} value={assay.execution_id}>{assay.execution_code} · {assay.assay_name}</option>)}
+        <select aria-label="Assay execution" value={draft.assay_execution_id} onChange={e => setDraft(d => ({ ...d, assay_execution_id: e.target.value }))} className={inputClass}>
+          <option value="">No assay execution</option>
+          {sample.assays.map(assay => <option key={assay.assay_execution_id} value={assay.assay_execution_id}>{assay.execution_name} · {assay.assay_name}</option>)}
         </select>
         <Button variant="outline" size="sm" disabled={attach.isPending}>Attach file</Button>
       </form>

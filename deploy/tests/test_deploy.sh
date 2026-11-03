@@ -24,8 +24,8 @@ ORIGIN="$WORK/remote/lacv.git"
 SOURCE="$WORK/source"
 STATE="$WORK/state"
 BACKUPS="$WORK/home/lacv-backups"
-OLD_HEAD="20261101_0006"
-NEW_HEAD="20261102_0007"
+OLD_HEAD="20261103_0007"
+NEW_HEAD="20261104_0008"
 passed=0
 failed=0
 
@@ -122,16 +122,16 @@ make_repositories() {
     git clone -q "$ORIGIN" "$CHECKOUT"
     BASE_COMMIT="$(git -C "$CHECKOUT" rev-parse HEAD)"
 
-    cat > "$SOURCE/backend/alembic/versions/20261102_0007_test.py" <<'PY'
+    cat > "$SOURCE/backend/alembic/versions/20261104_0008_test.py" <<'PY'
 """test migration
 
-Revision ID: 20261102_0007
-Revises: 20261101_0006
+Revision ID: 20261104_0008
+Revises: 20261103_0007
 """
-revision = "20261102_0007"
-down_revision = "20261101_0006"
+revision = "20261104_0008"
+down_revision = "20261103_0007"
 PY
-    git -C "$SOURCE" add backend/alembic/versions/20261102_0007_test.py
+    git -C "$SOURCE" add backend/alembic/versions/20261104_0008_test.py
     git -C "$SOURCE" -c user.name=test -c user.email=test@example.com commit -q -m "Add test migration"
     git -C "$SOURCE" push -q origin main
     TARGET_COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
@@ -214,7 +214,7 @@ test_dry_run_reports_plan_and_changes_nothing() {
     check "exit 0" [ "$rc" -eq 0 ]
     check "shows branch" contains "$output" "Branch:  main"
     check "shows incoming commit" contains "$output" "Add test migration"
-    check "shows new migration file" contains "$output" "backend/alembic/versions/20261102_0007_test.py"
+    check "shows new migration file" contains "$output" "backend/alembic/versions/20261104_0008_test.py"
     check "shows target head" contains "$output" "Target Alembic head: $NEW_HEAD"
     check "shows database revision" contains "$output" "Database revision:   $OLD_HEAD"
     check "says a migration will run" contains "$output" "WILL run 'alembic upgrade head' ($OLD_HEAD -> $NEW_HEAD)"

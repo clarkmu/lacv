@@ -210,31 +210,22 @@ def test_storage_moves_record_history(client):
     assert (moved["storage_events"][1]["operator_name"], moved["storage_events"][1]["notes"]) == ("kim", "rack swap")
 
 
-def test_assays_operate_on_samples_with_results_qc_and_outputs(client):
+def test_sample_history_lists_every_execution_it_took_part_in(client):
     sample = create_root(client, "S-001")
+    other = create_root(client, "S-002")
+    sequencing = client.post("/assay-definitions", json={"assay_name": "16S amplicon sequencing", "assay_type": "Sequencing", "target": "16S", "result_name": "Reads"}).json()
+    plate = client.post(f"/assay-definitions/{sequencing['assay_definition_id']}/executions", json={
+        "samples": [{"sample_id": sample["sample_id"], "result": "120000"}, {"sample_id": other["sample_id"]}],
+    }).json()
 
-    sequencing = client.post("/assay-definitions", json={"assay_name": "16S amplicon sequencing", "assay_type": "Sequencing", "target": "16S"}).json()
-    created = client.post(f"/samples/{sample['sample_id']}/assay-executions", json={"execution_code": "SEQ-1", "assay_definition_id": sequencing["assay_definition_id"]})
-    assert created.status_code == 201, created.text
-    execution_id = created.json()["execution_id"]
-    assert created.json()["sample"]["sample_code"] == "S-001"
+    history = client.get(f"/samples/{sample['sample_id']}").json()["assays"]
 
-    with_result = client.post(f"/assay-executions/{execution_id}/results", json={"result_name": "Reads", "numeric_value": "120000"}).json()
-    assert [r["result_name"] for r in with_result["results"]] == ["Reads"]
-    reviewed = client.patch(f"/assay-executions/{execution_id}", json={"qc_status": "accepted"}).json()
-    assert reviewed["qc_status"] == "accepted"
-    assert [a["qc_status"] for a in client.get("/assay-executions").json() if a["execution_id"] == execution_id] == ["accepted"]
-
-    with_output = client.post(f"/assay-executions/{execution_id}/output-samples", json={"sample_code": "S-001-LIB", "sample_type_id": 7})
-    assert with_output.status_code == 201, with_output.text
-    library = with_output.json()["output_samples"][0]
-    library_detail = client.get(f"/samples/{library['sample_id']}").json()
-    assert library_detail["parent"]["sample_code"] == "S-001"
-    assert [a["execution_code"] for a in library_detail["generated_by_assays"]] == ["SEQ-1"]
-    lineage = client.get(f"/samples/{sample['sample_id']}/lineage").json()
-    assert lineage["descendants"][0]["generated_by"] == {"kind": "assay", "code": "SEQ-1", "type": "Sequencing"}
-
-    assert client.post(f"/samples/{sample['sample_id']}/assay-executions", json={"execution_code": "SEQ-1", "assay_definition_id": sequencing["assay_definition_id"]}).status_code == 400
+    assert [(row["execution_name"], row["assay_name"], row["sample_count"], row["result_numeric"]) for row in history] == [
+        (plate["execution_name"], "16S amplicon sequencing", 2, "120000.00000000"),
+    ]
+    assert client.get(f"/samples/{other['sample_id']}").json()["assays"][0]["result_numeric"] is None
+    blocked = client.delete(f"/samples/{sample['sample_id']}")
+    assert blocked.status_code == 409 and "assay executions" in blocked.json()["detail"]
 
 
 def test_sample_page_shows_own_activity_not_descendants(client):
@@ -248,23 +239,28 @@ def test_sample_page_shows_own_activity_not_descendants(client):
     rna = client.get(f"/samples/{detail['children'][0]['sample_id']}").json()
     assert rna["assays"] == []
     cdna = client.get(f"/samples/{rna['children'][0]['sample_id']}").json()
-    assert [a["assay_name"] for a in cdna["assays"]] == ["LACV qPCR (SYBR Green)"]
-    assert [f["file_name"] for f in cdna["data_files"]] == ["qpcr-peds-2026-08-04.csv"]
+    assert [(a["assay_name"], a["result_numeric"]) for a in cdna["assays"]] == [("LACV qPCR (SYBR Green)", "28.40000000")]
+    plate = cdna["assays"][0]
+    assert plate["sample_count"] > 1, "the cDNA was run on a plate with the rest of its batch"
+    assert [f["file_name"] for f in cdna["data_files"]] == [f"{plate['execution_name'].lower()}.csv"], "the plate's export, via the execution"
 
 
 def test_attach_data_files_to_sample_and_assay(client):
     sample = create_root(client, "S-001")
-    definition_id = client.get("/assay-definitions").json()[0]["assay_definition_id"]
-    assay = client.post(f"/samples/{sample['sample_id']}/assay-executions", json={"execution_code": "QPCR-1", "assay_definition_id": definition_id}).json()
+    definition_id = next(row["assay_definition_id"] for row in client.get("/assay-definitions").json() if row["is_active"])
+    assay = client.post(f"/assay-definitions/{definition_id}/executions", json={"samples": [{"sample_id": sample["sample_id"]}]}).json()
+    outsider = client.post(f"/assay-definitions/{definition_id}/executions", json={"samples": [{"sample_id": create_root(client, "S-002")["sample_id"]}]}).json()
 
     client.post(f"/samples/{sample['sample_id']}/data-files", json={"file_type": "image", "file_name": "gel.png", "file_location": "/files/gel.png"})
     response = client.post(f"/samples/{sample['sample_id']}/data-files", json={
-        "file_type": "result", "file_name": "ct.csv", "file_location": "/files/ct.csv", "assay_id": assay["execution_id"], "checksum_sha256": "a" * 64,
+        "file_type": "result", "file_name": "ct.csv", "file_location": "/files/ct.csv", "assay_execution_id": assay["assay_execution_id"], "checksum_sha256": "a" * 64,
     })
 
     assert response.status_code == 201, response.text
     assert [f["file_name"] for f in response.json()["data_files"]] == ["gel.png", "ct.csv"]
-    assert [f["file_name"] for f in client.get(f"/assay-executions/{assay['execution_id']}").json()["data_files"]] == ["ct.csv"]
+    assert [f["file_name"] for f in client.get(f"/assay-executions/{assay['assay_execution_id']}").json()["data_files"]] == ["ct.csv"]
+    foreign = client.post(f"/samples/{sample['sample_id']}/data-files", json={"file_type": "x", "file_name": "y", "file_location": "z", "assay_execution_id": outsider["assay_execution_id"]})
+    assert foreign.status_code == 400 and "must include this sample" in foreign.text
     assert client.post(f"/samples/{sample['sample_id']}/data-files", json={"file_type": "x", "file_name": "y", "file_location": "z", "checksum_sha256": "nope"}).status_code == 422
 
 

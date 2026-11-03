@@ -1,18 +1,11 @@
-// How results are labelled and how a typed value is sent. Shared by result entry on Record assay and on the execution page.
+// How a Sample's result in an execution is shown, and how a link points at one execution on its assay's page.
 
-export function resultLabel(result: { analyte: string | null; result_name: string }) {
-  return result.analyte ? `${result.analyte} ${result.result_name}` : result.result_name
+export function resultText(row: { result_numeric?: string | null; result_text?: string | null }) {
+  if (row.result_numeric !== null && row.result_numeric !== undefined) return String(Number(row.result_numeric))
+  return row.result_text ?? ''
 }
 
-export type ResultDraft = { analyte: string; result_name: string; value: string; unit: string; interpretation: string; qc_status: string }
-
-/** A typed value is a number when it reads as one (e.g. 31.2); anything else, such as "not detected", is kept as text. */
-export function resultPayload(draft: ResultDraft) {
-  const value = draft.value.trim()
-  const isNumber = /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(value)
-  return {
-    analyte: draft.analyte || null, result_name: draft.result_name,
-    numeric_value: isNumber ? value : null, text_value: isNumber ? null : value || null,
-    unit: draft.unit || null, interpretation: draft.interpretation || null, qc_status: draft.qc_status,
-  }
+/** The assay's page, scrolled to one execution. */
+export function executionHref(execution: { assay_definition_id: number; assay_execution_id: number }) {
+  return `/assays/${execution.assay_definition_id}#execution-${execution.assay_execution_id}`
 }

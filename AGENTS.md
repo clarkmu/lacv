@@ -97,8 +97,7 @@ Primary entities:
 - Samples
 - Sample Types
 - Process Events
-- Assays
-- Assay Results
+- Assays (definitions), Assay Executions, and the Samples in each execution with their result
 - Storage Locations
 - Storage Events
 - Data Files
@@ -109,7 +108,7 @@ Sample is the single canonical physical identity. Every physical laboratory obje
 
 Aliquoting and other transformations are process events that create derived Samples.
 
-An Assay is a reusable procedure (assay_definitions), defined once and never tied to one Sample. Recording an assay on a Sample creates an assay execution (the assays table): which assay, when, performed by, volume used, status and QC. An execution may have several Assay Results and may produce derived Samples. Keep the three levels distinct: definition ≠ execution ≠ result. Who performed it belongs on the execution, never on the definition.
+An Assay is a reusable procedure (assay_definitions), defined once and never tied to one Sample. An assay execution (assay_executions) is one run of it holding one or more Samples (assay_execution_samples): each Sample at most once per execution, each with zero or one result (result_numeric or result_text). A Sample may take part in many executions, including several of the same assay. Keep the levels distinct: definition → execution → Sample with its result. Do not give an execution a single Sample or a Sample row several results. The execution's ID is its identity; its name is an editable label. Who performed it belongs on the execution, never on the definition. The assay's page (/assays/:id) is where executions are created and results entered; there is no separate execution page.
 
 "Material" in the lab's workflow means the Sample's type (sample_type_id), not a separate entity. subject_code identifies the study subject; aliquot_number tells apart one subject's tubes of one Material from one collection.
 

@@ -1,5 +1,5 @@
 import type {
-  AssayDefinitionDetail, AssayDefinitionDraft, AssayDefinitionListItem, AssayExecution, AssayExecutionDetail, AssayImportPreview, BatchDetail,
+  AssayDefinitionDetail, AssayDefinitionDraft, AssayDefinitionListItem, AssayExecution, BatchDetail, ExecutionImportPreview, ExecutionSampleDraft,
   BatchListItem, BatchSampleImportPreview, BatchSampleImportRow, ProcessEventDetail, SampleDetail, SampleLineage, SampleListItem, SampleRef, SampleType,
   StorageLocation, StorageLocationDetail,
 } from './types'
@@ -77,7 +77,6 @@ export const api = {
   updateSample: (id: number, changes: Record<string, unknown>) => patch<SampleDetail>(`/samples/${id}`, changes),
   deleteSample: (id: number) => request<void>(`/samples/${id}`, { method: 'DELETE' }),
   createAliquots: (sampleId: number, payload: Record<string, unknown>) => post<SampleDetail>(`/samples/${sampleId}/aliquots`, payload),
-  recordAssayExecution: (sampleId: number, payload: Record<string, unknown>) => post<AssayExecutionDetail>(`/samples/${sampleId}/assay-executions`, payload),
   attachDataFile: (sampleId: number, payload: Record<string, unknown>) => post<SampleDetail>(`/samples/${sampleId}/data-files`, payload),
 
   listSampleTypes: () => request<SampleType[]>('/sample-types'),
@@ -88,18 +87,19 @@ export const api = {
   listAssayDefinitions: (options: { activeOnly?: boolean } = {}) => request<AssayDefinitionListItem[]>(options.activeOnly ? '/assay-definitions?active_only=true' : '/assay-definitions'),
   getAssayDefinition: (id: string | number) => request<AssayDefinitionDetail>(`/assay-definitions/${id}`),
   createAssayDefinition: (payload: AssayDefinitionDraft) => post<AssayDefinitionDetail>('/assay-definitions', payload),
-  updateAssayDefinition: (id: number, changes: Partial<AssayDefinitionDraft> & { is_active?: boolean }) => patch<AssayDefinitionDetail>(`/assay-definitions/${id}`, changes),
-  previewAssayImport: (file: File) => request<AssayImportPreview>('/assay-definitions/import/preview', { method: 'POST', headers: {}, body: formWith(file) }),
-  importAssayDefinition: (file: File) => request<AssayDefinitionDetail>('/assay-definitions/import', { method: 'POST', headers: {}, body: formWith(file) }),
+  /** One execution with all its Samples, saved together or not at all. */
+  createAssayExecution: (definitionId: number, payload: { execution_name?: string | null; assay_date?: string | null; operator_name?: string | null; notes?: string | null; samples: ExecutionSampleDraft[] }) =>
+    post<AssayExecution>(`/assay-definitions/${definitionId}/executions`, payload),
+  previewExecutionImport: (definitionId: number, file: File) =>
+    request<ExecutionImportPreview>(`/assay-definitions/${definitionId}/executions/import/preview`, { method: 'POST', headers: {}, body: formWith(file) }),
+  executionTemplateUrl: (definitionId: number) => `${API}/assay-definitions/${definitionId}/executions/import-template`,
 
-  listAssayExecutions: () => request<AssayExecution[]>('/assay-executions'),
   listPerformedBy: () => request<string[]>('/assay-executions/performed-by'),
-  getAssayExecution: (id: string | number) => request<AssayExecutionDetail>(`/assay-executions/${id}`),
-  updateAssayExecution: (id: number, changes: Record<string, unknown>) => patch<AssayExecutionDetail>(`/assay-executions/${id}`, changes),
-  createAssayResult: (executionId: number, payload: Record<string, unknown>) => post<AssayExecutionDetail>(`/assay-executions/${executionId}/results`, payload),
-  updateAssayResult: (executionId: number, resultId: number, changes: Record<string, unknown>) => patch<AssayExecutionDetail>(`/assay-executions/${executionId}/results/${resultId}`, changes),
-  deleteAssayResult: (executionId: number, resultId: number) => request<AssayExecutionDetail>(`/assay-executions/${executionId}/results/${resultId}`, { method: 'DELETE' }),
-  createAssayOutputSample: (executionId: number, payload: Record<string, unknown>) => post<AssayExecutionDetail>(`/assay-executions/${executionId}/output-samples`, payload),
+  updateAssayExecution: (executionId: number, changes: Record<string, unknown>) => patch<AssayExecution>(`/assay-executions/${executionId}`, changes),
+  addExecutionSample: (executionId: number, payload: ExecutionSampleDraft) => post<AssayExecution>(`/assay-executions/${executionId}/samples`, payload),
+  /** Enter, change or clear one Sample's result; the backend decides whether it is a number or text. */
+  updateExecutionResult: (executionId: number, sampleId: number, result: string | null) => patch<AssayExecution>(`/assay-executions/${executionId}/samples/${sampleId}`, { result }),
+  removeExecutionSample: (executionId: number, sampleId: number) => request<AssayExecution>(`/assay-executions/${executionId}/samples/${sampleId}`, { method: 'DELETE' }),
 
   listStorageLocations: () => request<StorageLocation[]>('/storage-locations'),
   getStorageLocation: (id: string | number) => request<StorageLocationDetail>(`/storage-locations/${id}`),

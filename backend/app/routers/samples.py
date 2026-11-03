@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import (
-    Assay, AssayDefinition, AssayOutput, Batch, DataFile, LegacyMaterialRecord, ProcessEvent,
+    AssayDefinition, AssayExecution, AssayExecutionSample, AssayOutput, Batch, DataFile, LegacyMaterialRecord, ProcessEvent,
     ProcessEventInput, ProcessEventOutput, Sample, SampleQuantityEvent, StorageEvent, StorageLocation,
 )
 from ..quantity import availability
@@ -15,10 +15,9 @@ from ..sample_rules import (
     require_unique_sample_code, validate_parent, validate_references,
 )
 from ..schemas import (
-    AliquotCreate, AssayExecutionCreate, AssayExecutionDetail, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate,
-    SampleDetail, SampleLineage, SampleListItem, SampleRef, SampleUpdate,
+    AliquotCreate, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate, SampleDetail, SampleLineage, SampleListItem, SampleRef,
+    SampleUpdate,
 )
-from .assay_executions import get_assay_execution, record_execution, result_counts
 
 router = APIRouter(prefix="/samples", tags=["samples"])
 
@@ -63,7 +62,7 @@ def get_sample(sample_id: int, db: Session = Depends(get_db)):
     )
     if not sample:
         raise HTTPException(404, "Sample not found")
-    own_assays = _assays_where(Assay.sample_id == sample_id, db)
+    own_assays = _sample_executions(sample_id, db)
     ledger = db.scalars(
         select(SampleQuantityEvent)
         .where(SampleQuantityEvent.sample_id == sample_id)
@@ -78,17 +77,15 @@ def get_sample(sample_id: int, db: Session = Depends(get_db)):
         "children": sample.children,
         "storage_location": sample.storage_location,
         "legacy_identifiers": sample.legacy_material_records,
-        "generated_by_assays": _assay_summaries(
-            _assays_where(Assay.assay_id.in_(select(AssayOutput.assay_id).where(AssayOutput.sample_id == sample_id)), db), db
-        ),
+        "generated_by_assays": _executions_that_produced(sample_id, db),
         "process_events": _process_events_for(sample_id, db),
-        "assays": _assay_summaries(own_assays, db),
+        "assays": own_assays,
         "storage_events": _storage_events_for(sample_id, db),
         "quantity_events": list(reversed(ledger)),
         "availability": availability(sample.current_quantity, sample.quantity_unit, ledger),
         "data_files": db.scalars(
             select(DataFile)
-            .where(or_(DataFile.sample_id == sample_id, DataFile.assay_id.in_([assay.assay_id for assay in own_assays])))
+            .where(or_(DataFile.sample_id == sample_id, DataFile.assay_execution_id.in_([row["assay_execution_id"] for row in own_assays])))
             .order_by(DataFile.data_file_id)
         ).all(),
     }
@@ -190,7 +187,7 @@ def delete_sample(sample_id: int, db: Session = Depends(get_db)):
         "child samples": select(func.count()).where(Sample.parent_sample_id == sample_id),
         "process events": select(func.count()).select_from(ProcessEventInput).where(ProcessEventInput.sample_id == sample_id),
         "process outputs": select(func.count()).select_from(ProcessEventOutput).where(ProcessEventOutput.sample_id == sample_id),
-        "assays": select(func.count()).select_from(Assay).where(Assay.sample_id == sample_id),
+        "assay executions": select(func.count()).select_from(AssayExecutionSample).where(AssayExecutionSample.sample_id == sample_id),
         "assay outputs": select(func.count()).select_from(AssayOutput).where(AssayOutput.sample_id == sample_id),
         "data files": select(func.count()).select_from(DataFile).where(DataFile.sample_id == sample_id),
         "legacy material records": select(func.count()).select_from(LegacyMaterialRecord).where(LegacyMaterialRecord.sample_id == sample_id),
@@ -252,22 +249,13 @@ def create_aliquots(sample_id: int, payload: AliquotCreate, db: Session = Depend
     return get_sample(sample_id, db)
 
 
-@router.post("/{sample_id}/assay-executions", response_model=AssayExecutionDetail, status_code=status.HTTP_201_CREATED)
-def create_sample_assay_execution(sample_id: int, payload: AssayExecutionCreate, db: Session = Depends(get_db)):
-    """Record an assay performed on this Sample, the volume it used, and any results, as one change."""
-    sample = get_sample_or_404(sample_id, db)
-    execution = record_execution(sample, payload, db)
-    db.commit()
-    return get_assay_execution(execution.assay_id, db)
-
-
 @router.post("/{sample_id}/data-files", response_model=SampleDetail, status_code=status.HTTP_201_CREATED)
 def attach_data_file(sample_id: int, payload: DataFileCreate, db: Session = Depends(get_db)):
     get_sample_or_404(sample_id, db)
-    if payload.assay_id is not None:
-        assay = db.get(Assay, payload.assay_id)
-        if not assay or assay.sample_id != sample_id:
-            raise HTTPException(400, "The assay must belong to this sample")
+    if payload.assay_execution_id is not None and not db.scalar(select(AssayExecutionSample.assay_execution_sample_id).where(
+        AssayExecutionSample.assay_execution_id == payload.assay_execution_id, AssayExecutionSample.sample_id == sample_id,
+    )):
+        raise HTTPException(400, "The assay execution must include this sample")
     db.add(DataFile(sample_id=sample_id, **payload.model_dump()))
     db.commit()
     return get_sample(sample_id, db)
@@ -278,27 +266,55 @@ def _require_unique_process_code(process_code: str, db: Session) -> None:
         raise HTTPException(400, f"Process code already exists: {process_code}")
 
 
-def _assays_where(condition, db: Session) -> list[Assay]:
-    return db.scalars(select(Assay).where(condition).options(selectinload(Assay.definition)).order_by(Assay.assay_id.desc())).all()
-
-
-def _assay_summaries(assays: list[Assay], db: Session) -> list[dict]:
-    counts = result_counts([assay.assay_id for assay in assays], db)
+def _sample_executions(sample_id: int, db: Session) -> list[dict]:
+    """Every execution this Sample took part in, with this Sample's result in each, newest first."""
+    sample_counts = (
+        select(AssayExecutionSample.assay_execution_id, func.count().label("sample_count"))
+        .group_by(AssayExecutionSample.assay_execution_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(AssayExecutionSample, AssayExecution, AssayDefinition, sample_counts.c.sample_count)
+        .join(AssayExecution, AssayExecution.assay_execution_id == AssayExecutionSample.assay_execution_id)
+        .join(AssayDefinition, AssayDefinition.assay_definition_id == AssayExecution.assay_definition_id)
+        .join(sample_counts, sample_counts.c.assay_execution_id == AssayExecution.assay_execution_id)
+        .where(AssayExecutionSample.sample_id == sample_id)
+        .order_by(AssayExecution.assay_date.desc().nulls_last(), AssayExecution.assay_execution_id.desc())
+    ).all()
     return [
         {
-            "execution_id": assay.assay_id,
-            "execution_code": assay.assay_instance_code,
-            "assay_definition_id": assay.assay_definition_id,
-            "assay_name": assay.definition.assay_name,
-            "assay_type": assay.definition.assay_type,
-            "target": assay.definition.target,
-            "status": assay.status,
-            "qc_status": assay.qc_status,
-            "assay_date": assay.assay_date,
-            "result_count": counts.get(assay.assay_id, 0),
+            **_execution_summary(execution, definition),
+            "sample_count": sample_count,
+            "result_numeric": row.result_numeric,
+            "result_text": row.result_text,
+            "result_unit": definition.result_unit,
         }
-        for assay in assays
+        for row, execution, definition, sample_count in rows
     ]
+
+
+def _executions_that_produced(sample_id: int, db: Session) -> list[dict]:
+    rows = db.execute(
+        select(AssayExecution, AssayDefinition)
+        .join(AssayOutput, AssayOutput.assay_execution_id == AssayExecution.assay_execution_id)
+        .join(AssayDefinition, AssayDefinition.assay_definition_id == AssayExecution.assay_definition_id)
+        .where(AssayOutput.sample_id == sample_id)
+    ).all()
+    return [_execution_summary(execution, definition) for execution, definition in rows]
+
+
+def _execution_summary(execution: AssayExecution, definition: AssayDefinition) -> dict:
+    return {
+        "assay_execution_id": execution.assay_execution_id,
+        "execution_name": execution.execution_name,
+        "assay_definition_id": definition.assay_definition_id,
+        "assay_name": definition.assay_name,
+        "assay_type": definition.assay_type,
+        "target": definition.target,
+        "status": execution.status,
+        "qc_status": execution.qc_status,
+        "assay_date": execution.assay_date,
+    }
 
 
 def _process_events_for(sample_id: int, db: Session) -> list[dict]:
@@ -371,13 +387,13 @@ def _generated_by(sample_ids: list[int], db: Session) -> dict[int, dict]:
     if not sample_ids:
         return {}
     generated = {}
-    for sample_id, assay_code, assay_type in db.execute(
-        select(AssayOutput.sample_id, Assay.assay_instance_code, AssayDefinition.assay_type)
-        .join(Assay, Assay.assay_id == AssayOutput.assay_id)
-        .join(AssayDefinition, AssayDefinition.assay_definition_id == Assay.assay_definition_id)
+    for sample_id, execution_name, assay_type in db.execute(
+        select(AssayOutput.sample_id, AssayExecution.execution_name, AssayDefinition.assay_type)
+        .join(AssayExecution, AssayExecution.assay_execution_id == AssayOutput.assay_execution_id)
+        .join(AssayDefinition, AssayDefinition.assay_definition_id == AssayExecution.assay_definition_id)
         .where(AssayOutput.sample_id.in_(sample_ids))
     ).all():
-        generated[sample_id] = {"kind": "assay", "code": assay_code, "type": assay_type}
+        generated[sample_id] = {"kind": "assay", "code": execution_name, "type": assay_type}
     for link, process in db.execute(
         select(ProcessEventOutput, ProcessEvent)
         .join(ProcessEvent, ProcessEvent.process_event_id == ProcessEventOutput.process_event_id)
