@@ -6,7 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '../api'
-import { executionHref, resultText } from '../assayResults'
+import { executionHref, resultSetText } from '../assayResults'
 import { errorClass, inputClass, Panel, SecondaryCode, StatusBadge } from '../components/common'
 import { SampleActivity } from '../components/sample/SampleActivity'
 import { SampleIdentity } from '../components/sample/SampleIdentity'
@@ -82,12 +82,12 @@ function SampleAssays({ sample }: { sample: SampleDetail }) {
       )}
       {sample.assays.length ? (
         <CompactTable
-          head={['Execution', 'Assay', 'Result', 'Date', 'Status', 'QC', 'Samples']}
+          head={['Execution', 'Assay', 'Results', 'Date', 'Status', 'QC', 'Samples']}
           numericColumns={[6]}
           rows={sample.assays.map(assay => [
             <Link key="code" className="font-mono font-medium text-primary hover:underline" to={executionHref(assay)}>{assay.execution_name}</Link>,
             <Link key="assay" className="hover:text-primary hover:underline" to={`/assays/${assay.assay_definition_id}`}>{assay.assay_name}</Link>,
-            resultText(assay) ? <span key="result" className="tabular-nums">{resultText(assay)}{assay.result_unit && <span className="text-muted-foreground"> {assay.result_unit}</span>}</span> : <span key="result" className="text-muted-foreground">not entered</span>,
+            assay.results?.length ? <span key="result" className="tabular-nums">{resultSetText(assay.results)}</span> : <span key="result" className="text-muted-foreground">not entered</span>,
             <span key="date" className="text-muted-foreground tabular-nums">{formatDateTime(assay.assay_date)}</span>,
             <StatusBadge key="status" status={assay.status} />, <StatusBadge key="qc" status={assay.qc_status} />, assay.sample_count ?? 1,
           ])}

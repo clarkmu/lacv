@@ -213,17 +213,18 @@ def test_storage_moves_record_history(client):
 def test_sample_history_lists_every_execution_it_took_part_in(client):
     sample = create_root(client, "S-001")
     other = create_root(client, "S-002")
-    sequencing = client.post("/assay-definitions", json={"assay_name": "16S amplicon sequencing", "assay_type": "Sequencing", "target": "16S", "result_name": "Reads"}).json()
+    sequencing = client.post("/assay-definitions", json={"assay_name": "16S amplicon sequencing", "assay_type": "Sequencing", "target": "16S", "result_fields": [{"result_name": "Reads", "value_type": "numeric"}]}).json()
+    reads = sequencing["result_fields"][0]["assay_definition_result_id"]
     plate = client.post(f"/assay-definitions/{sequencing['assay_definition_id']}/executions", json={
-        "samples": [{"sample_id": sample["sample_id"], "result": "120000"}, {"sample_id": other["sample_id"]}],
+        "samples": [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": reads, "value": "120000"}]}, {"sample_id": other["sample_id"]}],
     }).json()
 
     history = client.get(f"/samples/{sample['sample_id']}").json()["assays"]
 
-    assert [(row["execution_name"], row["assay_name"], row["sample_count"], row["result_numeric"]) for row in history] == [
-        (plate["execution_name"], "16S amplicon sequencing", 2, "120000.00000000"),
+    assert [(row["execution_name"], row["assay_name"], row["sample_count"], [(item["label"], item["numeric_value"]) for item in row["results"]]) for row in history] == [
+        (plate["execution_name"], "16S amplicon sequencing", 2, [("Reads", "120000.00000000")]),
     ]
-    assert client.get(f"/samples/{other['sample_id']}").json()["assays"][0]["result_numeric"] is None
+    assert client.get(f"/samples/{other['sample_id']}").json()["assays"][0]["results"] == []
     blocked = client.delete(f"/samples/{sample['sample_id']}")
     assert blocked.status_code == 409 and "assay executions" in blocked.json()["detail"]
 
@@ -239,7 +240,9 @@ def test_sample_page_shows_own_activity_not_descendants(client):
     rna = client.get(f"/samples/{detail['children'][0]['sample_id']}").json()
     assert rna["assays"] == []
     cdna = client.get(f"/samples/{rna['children'][0]['sample_id']}").json()
-    assert [(a["assay_name"], a["result_numeric"]) for a in cdna["assays"]] == [("LACV qPCR (SYBR Green)", "28.40000000")]
+    assert [(a["assay_name"], [(item["label"], item["numeric_value"], item["interpretation"]) for item in a["results"]]) for a in cdna["assays"]] == [
+        ("LACV qPCR (SYBR Green)", [("LACV CT", "28.40000000", "positive")]),
+    ]
     plate = cdna["assays"][0]
     assert plate["sample_count"] > 1, "the cDNA was run on a plate with the rest of its batch"
     assert [f["file_name"] for f in cdna["data_files"]] == [f"{plate['execution_name'].lower()}.csv"], "the plate's export, via the execution"

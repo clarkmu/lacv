@@ -173,13 +173,31 @@ class AssayDefinition(Base):
     instrument: Mapped[str | None] = mapped_column(String(255))
     typical_volume: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
     typical_volume_unit: Mapped[str | None] = mapped_column(String(50))
-    # The one result each Sample in an execution reports.
-    result_name: Mapped[str | None] = mapped_column(String(255))
-    result_unit: Mapped[str | None] = mapped_column(String(50))
-    # numeric | text | either
-    result_value_type: Mapped[str] = mapped_column(String(20), default="either")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP"))
+
+    result_fields: Mapped[list[AssayDefinitionResult]] = relationship(
+        back_populates="definition", cascade="all, delete-orphan",
+        order_by="(AssayDefinitionResult.sort_order, AssayDefinitionResult.assay_definition_result_id)",
+    )
+
+class AssayDefinitionResult(Base):
+    """A result field the assay reports, e.g. CT for analyte LACV. Each Sample in an execution has one value set for these."""
+    __tablename__ = "assay_definition_results"
+    assay_definition_result_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    assay_definition_id: Mapped[int] = mapped_column(ForeignKey("assay_definitions.assay_definition_id"))
+    analyte: Mapped[str | None] = mapped_column(String(255))
+    result_name: Mapped[str] = mapped_column(String(255))
+    unit: Mapped[str | None] = mapped_column(String(50))
+    # numeric | text | either
+    value_type: Mapped[str] = mapped_column(String(20), default="either")
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+    definition: Mapped[AssayDefinition] = relationship(back_populates="result_fields")
+
+    @property
+    def label(self) -> str:
+        return f"{self.analyte} {self.result_name}" if self.analyte else self.result_name
 
 class AssayExecution(Base):
     """One execution (run) of an assay definition. Its Samples, and their results, are AssayExecutionSample rows."""
@@ -200,16 +218,28 @@ class AssayExecution(Base):
     )
 
 class AssayExecutionSample(Base):
-    """A Sample in an execution, with its one result (empty until entered)."""
+    """A Sample in an execution. Its result set is one AssayExecutionResult per field entered so far (none at first)."""
     __tablename__ = "assay_execution_samples"
     assay_execution_sample_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     assay_execution_id: Mapped[int] = mapped_column(ForeignKey("assay_executions.assay_execution_id"))
     sample_id: Mapped[int] = mapped_column(ForeignKey("samples.sample_id"))
-    result_numeric: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
-    result_text: Mapped[str | None] = mapped_column(Text)
 
     execution: Mapped[AssayExecution] = relationship(back_populates="samples")
     sample: Mapped[Sample] = relationship()
+    results: Mapped[list[AssayExecutionResult]] = relationship(back_populates="execution_sample", cascade="all, delete-orphan")
+
+class AssayExecutionResult(Base):
+    """One result field's value for one Sample in one execution, with its interpretation and QC."""
+    __tablename__ = "assay_execution_results"
+    assay_execution_result_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    assay_execution_sample_id: Mapped[int] = mapped_column(ForeignKey("assay_execution_samples.assay_execution_sample_id"))
+    assay_definition_result_id: Mapped[int] = mapped_column(ForeignKey("assay_definition_results.assay_definition_result_id"))
+    numeric_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    text_value: Mapped[str | None] = mapped_column(Text)
+    interpretation: Mapped[str | None] = mapped_column(String(255))
+    qc_status: Mapped[str] = mapped_column(String(50), default="not_reviewed")
+
+    execution_sample: Mapped[AssayExecutionSample] = relationship(back_populates="results")
 
 class AssayOutput(Base):
     """A derived Sample produced by an execution; it is a child of one of the execution's Samples."""

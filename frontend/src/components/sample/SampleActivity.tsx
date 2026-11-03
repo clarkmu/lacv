@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { ArrowRight, FlaskConical, MapPin, Pipette, Workflow, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { executionHref, resultText } from '../../assayResults'
+import { executionHref, resultSetText } from '../../assayResults'
 import { cn } from '@/lib/utils'
 import { SampleLink, StatusBadge } from '../common'
 import { formatDateTime, formatQuantity } from '../../format'
@@ -48,7 +48,7 @@ export function buildActivity(sample: SampleDetail): ActivityItem[] {
       kind: 'assay' as const,
       date: assay.assay_date,
       title: <><Link className="text-primary hover:underline" to={executionHref(assay)}>{assay.execution_name}</Link> <span className="text-muted-foreground">{assay.assay_name}</span></>,
-      detail: <span className="flex flex-wrap items-center gap-1.5"><StatusBadge status={assay.status} />QC <StatusBadge status={assay.qc_status} /><span className="text-muted-foreground">{resultText(assay) ? `Result ${resultText(assay)}${assay.result_unit ? ` ${assay.result_unit}` : ''}` : 'No result yet'}</span></span>,
+      detail: <span className="flex flex-wrap items-center gap-1.5"><StatusBadge status={assay.status} />QC <StatusBadge status={assay.qc_status} /><span className="text-muted-foreground">{assay.results?.length ? resultSetText(assay.results) : 'No results yet'}</span></span>,
     })),
     ...sample.storage_events.map(event => ({
       key: `storage-${event.storage_event_id}`,

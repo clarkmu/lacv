@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import (
-    AssayDefinition, AssayExecution, AssayExecutionSample, AssayOutput, Batch, DataFile, LegacyMaterialRecord, ProcessEvent,
+    AssayDefinition, AssayDefinitionResult, AssayExecution, AssayExecutionResult, AssayExecutionSample, AssayOutput, Batch, DataFile, LegacyMaterialRecord, ProcessEvent,
     ProcessEventInput, ProcessEventOutput, Sample, SampleQuantityEvent, StorageEvent, StorageLocation,
 )
 from ..quantity import availability
@@ -267,7 +267,7 @@ def _require_unique_process_code(process_code: str, db: Session) -> None:
 
 
 def _sample_executions(sample_id: int, db: Session) -> list[dict]:
-    """Every execution this Sample took part in, with this Sample's result in each, newest first."""
+    """Every execution this Sample took part in, with this Sample's result set in each, newest first."""
     sample_counts = (
         select(AssayExecutionSample.assay_execution_id, func.count().label("sample_count"))
         .group_by(AssayExecutionSample.assay_execution_id)
@@ -281,14 +281,19 @@ def _sample_executions(sample_id: int, db: Session) -> list[dict]:
         .where(AssayExecutionSample.sample_id == sample_id)
         .order_by(AssayExecution.assay_date.desc().nulls_last(), AssayExecution.assay_execution_id.desc())
     ).all()
+    results: dict[int, list[dict]] = {}
+    for result, field in db.execute(
+        select(AssayExecutionResult, AssayDefinitionResult)
+        .join(AssayDefinitionResult, AssayDefinitionResult.assay_definition_result_id == AssayExecutionResult.assay_definition_result_id)
+        .where(AssayExecutionResult.assay_execution_sample_id.in_([row.assay_execution_sample_id for row, *_ in rows]))
+        .order_by(AssayDefinitionResult.sort_order, AssayDefinitionResult.assay_definition_result_id)
+    ).all():
+        results.setdefault(result.assay_execution_sample_id, []).append({
+            "label": field.label, "unit": field.unit, "numeric_value": result.numeric_value, "text_value": result.text_value,
+            "interpretation": result.interpretation, "qc_status": result.qc_status,
+        })
     return [
-        {
-            **_execution_summary(execution, definition),
-            "sample_count": sample_count,
-            "result_numeric": row.result_numeric,
-            "result_text": row.result_text,
-            "result_unit": definition.result_unit,
-        }
+        {**_execution_summary(execution, definition), "sample_count": sample_count, "results": results.get(row.assay_execution_sample_id, [])}
         for row, execution, definition, sample_count in rows
     ]
 

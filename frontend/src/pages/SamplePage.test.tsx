@@ -33,7 +33,7 @@ const SAMPLE: SampleDetail = {
     { process_event_id: 10, process_code: 'EXT-1', process_type: 'RNA extraction', status: 'completed', operator_name: 'Ana', started_at: '2026-10-01T09:00:00', completed_at: null, role: 'output', inputs: [ref(1, 'S-001')], outputs: [ref(2, 'S-001-RNA')] },
   ],
   assays: [
-    { assay_execution_id: 20, execution_name: 'QPCR-1', assay_definition_id: 4, assay_name: 'qPCR', assay_type: 'qPCR', target: 'Gene X', status: 'completed', qc_status: 'accepted', assay_date: '2026-10-03T10:00:00', sample_count: 3, result_numeric: '31.20000000', result_text: null, result_unit: 'cycles' },
+    { assay_execution_id: 20, execution_name: 'QPCR-1', assay_definition_id: 4, assay_name: 'qPCR', assay_type: 'qPCR', target: 'Gene X', status: 'completed', qc_status: 'accepted', assay_date: '2026-10-03T10:00:00', sample_count: 3, results: [{ label: 'LACV CT', unit: 'cycles', numeric_value: '31.20000000', text_value: null, interpretation: 'positive', qc_status: 'not_reviewed' }] },
   ],
   storage_events: [
     { storage_event_id: 30, event_type: 'stored', event_date: '2026-10-01T09:30:00', from_location_id: null, to_location_id: 7, from_location_code: null, to_location_code: 'BOX-7', operator_name: null, notes: null },

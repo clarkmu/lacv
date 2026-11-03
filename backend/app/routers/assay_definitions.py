@@ -1,4 +1,4 @@
-"""Assays: reusable procedures. Each execution of one holds one or more Samples, each with zero or one result."""
+"""Assays: reusable procedures and their result fields. Each execution holds one or more Samples, each with one result set."""
 import re
 from decimal import Decimal
 from io import BytesIO
@@ -6,11 +6,11 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..execution_import import read_execution_workbook, template_rows
-from ..models import AssayDefinition, AssayExecution, AssayExecutionSample
+from ..models import AssayDefinition, AssayDefinitionResult, AssayExecution, AssayExecutionSample
 from ..schemas import (
     AssayDefinitionCreate, AssayDefinitionDetail, AssayDefinitionListItem, AssayDefinitionUpdate, AssayExecutionCreate, AssayExecutionDetail,
     ExecutionImportPreview,
@@ -22,13 +22,13 @@ router = APIRouter(prefix="/assay-definitions", tags=["assays"])
 MAX_WORKBOOK_BYTES = 2 * 1024 * 1024
 DEFINITION_FIELDS = (
     "assay_definition_id", "assay_code", "assay_name", "assay_type", "target", "kit", "instrument", "typical_volume", "typical_volume_unit",
-    "result_name", "result_unit", "result_value_type", "is_active",
+    "result_fields", "is_active",
 )
 
 
 @router.get("", response_model=list[AssayDefinitionListItem])
 def list_assay_definitions(active_only: bool = False, db: Session = Depends(get_db)):
-    query = select(AssayDefinition).order_by(func.lower(AssayDefinition.assay_name), AssayDefinition.assay_definition_id)
+    query = select(AssayDefinition).options(selectinload(AssayDefinition.result_fields)).order_by(func.lower(AssayDefinition.assay_name), AssayDefinition.assay_definition_id)
     if active_only:
         query = query.where(AssayDefinition.is_active.is_(True))
     usage = _usage_by_definition(db)
@@ -41,7 +41,14 @@ def create_assay_definition(payload: AssayDefinitionCreate, db: Session = Depend
     code = payload.assay_code or _generated_code(payload.assay_name, db)
     if db.scalar(select(AssayDefinition.assay_definition_id).where(AssayDefinition.assay_code == code)):
         raise field_error("assay_code", f"Assay code already exists: {code}", 400)
-    definition = AssayDefinition(assay_code=code, **payload.model_dump(exclude={"assay_code"}))
+    labels = [f"{field.analyte} {field.result_name}".strip().lower() if field.analyte else field.result_name.lower() for field in payload.result_fields]
+    if len(labels) != len(set(labels)):
+        raise field_error("result_fields", "Each result field needs a different analyte or name")
+    definition = AssayDefinition(
+        assay_code=code,
+        **payload.model_dump(exclude={"assay_code", "result_fields"}),
+        result_fields=[AssayDefinitionResult(**field.model_dump(), sort_order=index) for index, field in enumerate(payload.result_fields)],
+    )
     db.add(definition)
     db.commit()
     return get_assay_definition(definition.assay_definition_id, db)
@@ -58,7 +65,7 @@ def get_assay_definition(definition_id: int, db: Session = Depends(get_db)):
         "description": definition.description,
         "created_at": definition.created_at,
         "next_execution_name": next_execution_name(definition, db),
-        "result_summary": _result_summary(definition, executions),
+        "result_summaries": _result_summaries(definition, executions),
         "executions": executions,
     }
 
@@ -67,7 +74,7 @@ def get_assay_definition(definition_id: int, db: Session = Depends(get_db)):
 def update_assay_definition(definition_id: int, payload: AssayDefinitionUpdate, db: Session = Depends(get_db)):
     definition = _definition_or_404(definition_id, db)
     data = payload.model_dump(exclude_unset=True)
-    for required in ("assay_name", "assay_type", "result_value_type"):
+    for required in ("assay_name", "assay_type"):
         if required in data and not data[required]:
             raise field_error(required, "This field is required")
     for key, value in data.items():
@@ -91,6 +98,7 @@ def create_assay_execution(definition_id: int, payload: AssayExecutionCreate, db
 def download_execution_template(definition_id: int, db: Session = Depends(get_db)):
     """A workbook in the shape the execution import reads: a Samples sheet and an Execution sheet."""
     from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
 
     definition = _definition_or_404(definition_id, db)
     workbook = Workbook()
@@ -99,8 +107,8 @@ def download_execution_template(definition_id: int, db: Session = Depends(get_db
         sheet = workbook.create_sheet(title)
         for row in rows:
             sheet.append(row)
-        for column in ("A", "B", "C", "D"):
-            sheet.column_dimensions[column].width = 24
+        for index in range(1, sheet.max_column + 1):
+            sheet.column_dimensions[get_column_letter(index)].width = 24
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
@@ -124,19 +132,26 @@ async def preview_execution_import(definition_id: int, file: UploadFile = File(.
     return read_execution_workbook(content, file.filename, definition, db)
 
 
-def _result_summary(definition: AssayDefinition, executions: list[dict]) -> dict:
+def _result_summaries(definition: AssayDefinition, executions: list[dict]) -> list[dict]:
+    """Per result field: the mean of its numeric values; blanks and text are counted, never averaged; text fields have no mean."""
     rows = [row for execution in executions for row in execution["samples"]]
-    numeric = [row["result_numeric"] for row in rows if row["result_numeric"] is not None]
-    text_count = sum(1 for row in rows if row["result_text"] is not None)
-    averageable = definition.result_value_type != "text"
-    return {
-        "mean": sum(numeric, Decimal(0)) / len(numeric) if numeric and averageable else None,
-        "numeric_count": len(numeric),
-        "text_count": text_count,
-        "empty_count": len(rows) - len(numeric) - text_count,
-        "unit": definition.result_unit,
-        "averageable": averageable,
-    }
+    summaries = []
+    for field in definition.result_fields:
+        values = [result for row in rows for result in row["results"] if result.assay_definition_result_id == field.assay_definition_result_id]
+        numeric = [result.numeric_value for result in values if result.numeric_value is not None]
+        text_count = sum(1 for result in values if result.text_value is not None)
+        averageable = field.value_type != "text"
+        summaries.append({
+            "assay_definition_result_id": field.assay_definition_result_id,
+            "label": field.label,
+            "unit": field.unit,
+            "mean": sum(numeric, Decimal(0)) / len(numeric) if numeric and averageable else None,
+            "numeric_count": len(numeric),
+            "text_count": text_count,
+            "empty_count": len(rows) - len(numeric) - text_count,
+            "averageable": averageable,
+        })
+    return summaries
 
 
 def _usage_by_definition(db: Session, definition_id: int | None = None) -> dict[int, dict]:

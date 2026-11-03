@@ -7,7 +7,8 @@
 -- and mosquito surveillance pools. Many roots go through
 --   root -> RNA extraction -> RNA -> reverse transcription -> cDNA -> qPCR execution -> CT result
 -- with every volume removal on the quantity ledger. Assays are reusable definitions; each
--- execution is a plate of one batch's Samples, and each Sample in it has at most one result.
+-- execution is a plate of one batch's Samples, and each Sample in it has one result set: a value,
+-- interpretation and QC for each of the assay's result fields (left empty where not read yet).
 
 -- Helpers for this load only (pg_temp functions disappear with the session).
 CREATE FUNCTION pg_temp.storage_id(code TEXT) RETURNS BIGINT LANGUAGE sql AS $$
@@ -97,20 +98,42 @@ BEGIN
 	RETURN found_id;
 END $$;
 
--- A Sample joins an execution with its result (number or text, or neither); p_volume (in the Sample's unit) goes on its ledger.
-CREATE FUNCTION pg_temp.add_to_execution(p_execution_id BIGINT, p_sample_id BIGINT, p_volume NUMERIC, p_numeric NUMERIC, p_text TEXT)
-	RETURNS VOID LANGUAGE plpgsql AS $$
+-- A Sample joins an execution; p_volume (in the Sample's unit) goes on its ledger. A value for the assay's first
+-- result field is recorded with it when given (QC follows the plate's review).
+CREATE FUNCTION pg_temp.add_to_execution(p_execution_id BIGINT, p_sample_id BIGINT, p_volume NUMERIC, p_numeric NUMERIC, p_text TEXT,
+	p_interpretation TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
 DECLARE
 	execution RECORD;
 BEGIN
 	SELECT * INTO execution FROM assay_executions WHERE assay_execution_id = p_execution_id;
-	INSERT INTO assay_execution_samples (assay_execution_id, sample_id, result_numeric, result_text)
-	VALUES (p_execution_id, p_sample_id, p_numeric, p_text);
+	INSERT INTO assay_execution_samples (assay_execution_id, sample_id) VALUES (p_execution_id, p_sample_id);
 	IF p_volume IS NOT NULL THEN
 		PERFORM pg_temp.remove(p_sample_id, p_volume, 'consumed', NULL, p_execution_id, execution.operator_name, execution.assay_date,
 			'Used by assay execution ' || execution.execution_name);
 	END IF;
+	PERFORM pg_temp.add_value(p_execution_id, p_sample_id,
+		(SELECT assay_definition_result_id FROM assay_definition_results WHERE assay_definition_id = execution.assay_definition_id ORDER BY sort_order LIMIT 1),
+		p_numeric, p_text, p_interpretation);
 END $$;
+
+-- One result field's value for a Sample already in the execution. Nothing is stored when there is nothing to store.
+CREATE FUNCTION pg_temp.add_value(p_execution_id BIGINT, p_sample_id BIGINT, p_field_id BIGINT, p_numeric NUMERIC, p_text TEXT,
+	p_interpretation TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
+BEGIN
+	IF p_numeric IS NULL AND p_text IS NULL AND p_interpretation IS NULL THEN
+		RETURN;
+	END IF;
+	INSERT INTO assay_execution_results (assay_execution_sample_id, assay_definition_result_id, numeric_value, text_value, interpretation, qc_status)
+	SELECT x.assay_execution_sample_id, p_field_id, p_numeric, p_text, p_interpretation,
+		CASE WHEN e.qc_status IN ('accepted', 'rejected') THEN e.qc_status ELSE 'not_reviewed' END
+	FROM assay_execution_samples x JOIN assay_executions e USING (assay_execution_id)
+	WHERE x.assay_execution_id = p_execution_id AND x.sample_id = p_sample_id;
+END $$;
+
+CREATE FUNCTION pg_temp.field_id(p_definition_code TEXT, p_analyte TEXT, p_name TEXT) RETURNS BIGINT LANGUAGE sql AS $$
+	SELECT r.assay_definition_result_id FROM assay_definition_results r JOIN assay_definitions d USING (assay_definition_id)
+	WHERE d.assay_code = p_definition_code AND r.analyte IS NOT DISTINCT FROM p_analyte AND r.result_name = p_name
+$$;
 
 -- ----- Reference data -------------------------------------------------------------------------
 
@@ -155,23 +178,35 @@ INSERT INTO storage_locations (parent_location_id, location_code, location_type,
 	(pg_temp.storage_id('SHELF-2'), 'BOX-CDNA-01', 'box', 'cDNA box 1');
 
 INSERT INTO assay_definitions (assay_code, assay_name, assay_type, target, protocol_id, kit, instrument, typical_volume, typical_volume_unit, description,
-	result_name, result_unit, result_value_type, is_active) VALUES
+	is_active) VALUES
 	('LACV-QPCR-SYBR', 'LACV qPCR (SYBR Green)', 'qPCR', 'LACV', (SELECT protocol_id FROM protocols WHERE protocol_code = 'PROT-LACV-QPCR'),
-		'PowerUp SYBR Green Master Mix (Thermo)', 'QuantStudio 5', 2, 'uL', 'SYBR Green qPCR on cDNA. Report CT, or "not detected" when there is no amplification by cycle 40.',
-		'LACV CT', 'cycles', 'either', TRUE),
-	('LACV-RNASEP-DUPLEX', 'LACV / RNase P duplex RT-qPCR', 'qPCR', 'LACV', NULL,
-		'TaqPath 1-Step Multiplex Master Mix (Thermo)', 'QuantStudio 5', 5, 'uL', 'One-step probe RT-qPCR on RNA. RNase P is the in-well input control; a well without RNase P is repeated, not reported.',
-		'LACV CT', 'cycles', 'either', TRUE),
+		'PowerUp SYBR Green Master Mix (Thermo)', 'QuantStudio 5', 2, 'uL', 'SYBR Green qPCR on cDNA. Report CT, or "not detected" when there is no amplification by cycle 40.', TRUE),
+	('LACV-RNASEP-DUPLEX', 'LACV / RNase P duplex RT-qPCR', 'qPCR', 'LACV, RNase P', NULL,
+		'TaqPath 1-Step Multiplex Master Mix (Thermo)', 'QuantStudio 5', 5, 'uL', 'One-step probe RT-qPCR on RNA; RNase P confirms human sample input.', TRUE),
 	('HRTV-QPCR', 'Heartland virus qPCR', 'qPCR', 'HRTV', NULL,
-		'PowerUp SYBR Green Master Mix (Thermo)', 'QuantStudio 5', 2, 'uL', 'SYBR Green qPCR on cDNA.', 'HRTV CT', 'cycles', 'either', TRUE),
+		'PowerUp SYBR Green Master Mix (Thermo)', 'QuantStudio 5', 2, 'uL', 'SYBR Green qPCR on cDNA.', TRUE),
 	('RNA-QUBIT', 'RNA quantification (Qubit HS)', 'Quantification', 'RNA', NULL,
-		'Qubit RNA HS Assay Kit', 'Qubit 4', 1, 'uL', NULL, 'RNA concentration', 'ng/uL', 'numeric', TRUE),
+		'Qubit RNA HS Assay Kit', 'Qubit 4', 1, 'uL', NULL, TRUE),
 	('LACV-PRNT50', 'LACV PRNT50 neutralization', 'Serology', 'LACV', (SELECT protocol_id FROM protocols WHERE protocol_code = 'PROT-PRNT'),
-		NULL, NULL, 50, 'uL', 'Reciprocal serum dilution that reduces plaques by 50%. Report "<10" when below the first dilution.', 'PRNT50 titer', NULL, 'either', TRUE),
+		NULL, NULL, 50, 'uL', 'Reciprocal serum dilution that reduces plaques by 50%. Report "<10" when below the first dilution.', TRUE),
 	('VIRAL-CULTURE', 'Viral culture (Vero E6)', 'Culture', 'LACV', NULL,
-		NULL, NULL, 1, 'mL', 'Inoculate Vero E6, observe 7 days for CPE, confirm by qPCR.', 'CPE', NULL, 'text', TRUE),
+		NULL, NULL, 1, 'mL', 'Inoculate Vero E6, observe 7 days for CPE, confirm by qPCR.', TRUE),
 	('LACV-QPCR-V1', 'LACV qPCR (original primers)', 'qPCR', 'LACV', NULL,
-		'iTaq Universal SYBR Green Supermix', 'CFX96', 2, 'uL', 'Replaced by LACV qPCR (SYBR Green) in June 2025.', 'LACV CT', 'cycles', 'either', FALSE);
+		'iTaq Universal SYBR Green Supermix', 'CFX96', 2, 'uL', 'Replaced by LACV qPCR (SYBR Green) in June 2025.', FALSE);
+
+INSERT INTO assay_definition_results (assay_definition_id, analyte, result_name, unit, value_type, sort_order)
+SELECT d.assay_definition_id, r.analyte, r.result_name, r.unit, r.value_type, r.sort_order
+FROM (VALUES
+	('LACV-QPCR-SYBR', 'LACV', 'CT', 'cycles', 'either', 0),
+	('LACV-RNASEP-DUPLEX', 'LACV', 'CT', 'cycles', 'either', 0),
+	('LACV-RNASEP-DUPLEX', 'RNase P', 'CT', 'cycles', 'numeric', 1),
+	('HRTV-QPCR', 'HRTV', 'CT', 'cycles', 'either', 0),
+	('RNA-QUBIT', 'RNA', 'Concentration', 'ng/uL', 'numeric', 0),
+	('LACV-PRNT50', 'LACV', 'PRNT50 titer', NULL, 'either', 0),
+	('VIRAL-CULTURE', NULL, 'CPE', NULL, 'text', 0),
+	('LACV-QPCR-V1', 'LACV', 'CT', 'cycles', 'either', 0)
+) AS r (assay_code, analyte, result_name, unit, value_type, sort_order)
+JOIN assay_definitions d ON d.assay_code = r.assay_code;
 
 -- ----- Batches, root Samples and their workflow ----------------------------------------------
 
@@ -296,22 +331,22 @@ BEGIN
 				qc := CASE WHEN received < TIMESTAMP '2026-01-01' THEN 'accepted' ELSE 'not_reviewed' END;
 				execution_id := pg_temp.execution_for(spec.code || ':prnt', 'LACV-PRNT50', operator, received + INTERVAL '8 days', 'completed', qc, NULL);
 				IF subject_number % 3 = 0 THEN
-					PERFORM pg_temp.add_to_execution(execution_id, root_id, 0.05, 40 * (1 + subject_number % 4), NULL);
+					PERFORM pg_temp.add_to_execution(execution_id, root_id, 0.05, 40 * (1 + subject_number % 4), NULL, 'positive');
 				ELSE
-					PERFORM pg_temp.add_to_execution(execution_id, root_id, 0.05, NULL, '<10');
+					PERFORM pg_temp.add_to_execution(execution_id, root_id, 0.05, NULL, '<10', 'negative');
 				END IF;
 			END IF;
 
 			-- CSF tube 2: an attempted viral culture uses the whole tube.
 			IF type_code = 'csf' AND aliquot = 2 AND subject_number % 2 = 1 THEN
 				execution_id := pg_temp.execution_for(spec.code || ':culture', 'VIRAL-CULTURE', operator, received + INTERVAL '12 days', 'completed', 'accepted', 'Passaged twice');
-				PERFORM pg_temp.add_to_execution(execution_id, root_id, 0.5, NULL, 'not observed');
+				PERFORM pg_temp.add_to_execution(execution_id, root_id, 0.5, NULL, 'not observed', 'negative');
 			END IF;
 
 			-- Older executions with the retired primer set, kept as history.
 			IF spec.code = 'HOSP-2025-01' AND aliquot = 3 AND subject_number % 2 = 1 THEN
 				execution_id := pg_temp.execution_for(spec.code || ':v1', 'LACV-QPCR-V1', operator, TIMESTAMP '2025-02-03 15:00', 'completed', 'accepted', 'Run on the original primer set');
-				PERFORM pg_temp.add_to_execution(execution_id, root_id, NULL, NULL, 'not detected');
+				PERFORM pg_temp.add_to_execution(execution_id, root_id, NULL, NULL, 'not detected', 'negative');
 			END IF;
 
 			-- Extraction is done on the first tube of a collection; every sixth root is still untouched.
@@ -335,7 +370,7 @@ BEGIN
 			-- so each Sample's ledger stays in date order.
 			IF r % 3 = 0 THEN
 				execution_id := pg_temp.execution_for(spec.code || ':qubit', 'RNA-QUBIT', operator, received + INTERVAL '10 days 5 hours', 'completed', qc, NULL);
-				PERFORM pg_temp.add_to_execution(execution_id, rna_id, 1, 2.4 + (r % 9) * 2.65, NULL);
+				PERFORM pg_temp.add_to_execution(execution_id, rna_id, 1, 2.4 + (r % 9) * 2.65, NULL, NULL);
 				UPDATE samples SET concentration = 2.4 + (r % 9) * 2.65, concentration_unit = 'ng/uL' WHERE sample_id = rna_id;
 			END IF;
 
@@ -343,10 +378,11 @@ BEGIN
 			IF spec.kind IN ('hospital', 'blood') THEN
 				execution_id := pg_temp.execution_for(spec.code || ':duplex', 'LACV-RNASEP-DUPLEX', operator, received + INTERVAL '10 days 6 hours', 'completed', qc, NULL);
 				IF r % 5 = 2 THEN
-					PERFORM pg_temp.add_to_execution(execution_id, rna_id, 5, 33.1 + (r % 4) * 0.7, NULL);
+					PERFORM pg_temp.add_to_execution(execution_id, rna_id, 5, 33.1 + (r % 4) * 0.7, NULL, 'positive');
 				ELSE
-					PERFORM pg_temp.add_to_execution(execution_id, rna_id, 5, NULL, 'not detected');
+					PERFORM pg_temp.add_to_execution(execution_id, rna_id, 5, NULL, 'not detected', 'negative');
 				END IF;
+				PERFORM pg_temp.add_value(execution_id, rna_id, pg_temp.field_id('LACV-RNASEP-DUPLEX', 'RNase P', 'CT'), 24.2 + (r % 6) * 0.9, NULL, 'detected');
 			END IF;
 
 			-- Reverse transcription, then SYBR qPCR on the cDNA.
@@ -358,18 +394,18 @@ BEGIN
 			IF r % 11 = 5 THEN
 				-- A failed plate, repeated: these Samples are in two executions of the same assay.
 				execution_id := pg_temp.execution_for(spec.code || ':qpcr-failed', 'LACV-QPCR-SYBR', operator, received + INTERVAL '12 days 5 hours', 'failed', 'rejected', 'NTC amplified; plate repeated');
-				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, 36.8, NULL);
+				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, 36.8, NULL, 'invalid run');
 			END IF;
 			execution_id := pg_temp.execution_for(spec.code || ':qpcr', CASE WHEN spec.kind = 'blood' THEN 'HRTV-QPCR' ELSE 'LACV-QPCR-SYBR' END, operator,
 				received + INTERVAL '13 days 5 hours', 'completed', qc, NULL);
 			IF r % 9 = 4 THEN
 				ct := 24 + (r % 10) * 1.1;
-				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, ct, NULL);
+				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, ct, NULL, 'positive');
 			ELSIF r % 13 = 7 THEN
 				-- Results not read off the instrument yet.
-				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, NULL, NULL);
+				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, NULL, NULL, NULL);
 			ELSE
-				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, NULL, 'not detected');
+				PERFORM pg_temp.add_to_execution(execution_id, cdna_id, 2, NULL, 'not detected', 'negative');
 			END IF;
 		END LOOP;
 	END LOOP;

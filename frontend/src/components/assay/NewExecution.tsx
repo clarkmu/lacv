@@ -11,11 +11,15 @@ import { SuggestInput } from '../SuggestInput'
 import { SampleFinder } from './SampleFinder'
 import type { AssayDefinitionDetail, AssayExecution, ExecutionImportPreview, SampleRef } from '../../types'
 
-type Row = { sample: SampleRef & { sample_type_id?: number | null }; result: string; volume: string; unit: string }
+type Entry = { value: string; interpretation: string; qc_status: string | null }
+/** A sample row: its typed result fields by field id (any or all blank), and the volume used. */
+type Row = { sample: SampleRef & { sample_type_id?: number | null }; results: Record<number, Entry>; volume: string; unit: string }
+
+const BLANK: Entry = { value: '', interpretation: '', qc_status: null }
 
 /**
  * A new execution of this assay as a small spreadsheet: name and details on top, then one row per sample with its
- * result (blank if not known yet) and the volume used. Rows come from the sample finder or an .xlsx workbook.
+ * result fields (any or all blank until the assay is done) and the volume used. Rows come from the sample finder or an .xlsx workbook.
  * Saving creates the execution and every row together, or nothing.
  */
 export function NewExecution({ definition, onSaved, onCancel }: { definition: AssayDefinitionDetail; onSaved: (execution: AssayExecution) => void; onCancel: () => void }) {
@@ -38,7 +42,12 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
     mutationFn: (file: File) => api.previewExecutionImport(definition.assay_definition_id, file),
     onSuccess: (preview: ExecutionImportPreview) => {
       if (!preview.can_import) return
-      setRows(preview.rows.map(row => ({ sample: row.sample!, result: row.result ?? '', volume: row.volume_used ? String(Number(row.volume_used)) : '', unit: row.volume_unit ?? unit })))
+      setRows(preview.rows.map(row => ({
+        sample: row.sample!,
+        results: Object.fromEntries(row.results.map(result => [result.assay_definition_result_id, { value: result.value ?? '', interpretation: result.interpretation ?? '', qc_status: result.qc_status }])),
+        volume: row.volume_used ? String(Number(row.volume_used)) : '',
+        unit: row.volume_unit ?? unit,
+      })))
       const details = preview.execution
       if (details?.execution_name) setName(details.execution_name)
       if (details?.assay_date) { setDate(details.assay_date.slice(0, 10)); setTime(details.assay_date.slice(11, 16)) }
@@ -54,7 +63,15 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
       assay_date: date ? `${date}T${time || '00:00'}` : null,
       operator_name: performedBy || null,
       notes: notes || null,
-      samples: rows.map(row => ({ sample_id: row.sample.sample_id, result: row.result.trim() || null, volume_used: row.volume || null, volume_unit: row.volume ? row.unit || null : null })),
+      samples: rows.map(row => ({
+        sample_id: row.sample.sample_id,
+        // Blank cells are sent as null: not entered.
+        results: Object.entries(row.results).map(([fieldId, entry]) => ({
+          assay_definition_result_id: Number(fieldId), value: entry.value.trim() || null, interpretation: entry.interpretation.trim() || null, qc_status: entry.qc_status,
+        })),
+        volume_used: row.volume || null,
+        volume_unit: row.volume ? row.unit || null : null,
+      })),
     }),
     onSuccess: execution => {
       client.invalidateQueries({ queryKey: ['assay-definition', String(definition.assay_definition_id)] })
@@ -66,17 +83,24 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
     onSettled: () => { submitting.current = false },
   })
   const fieldErrors = save.error instanceof ApiError ? save.error.fieldErrors : {}
-  const rowError = (index: number) => ['sample_id', 'result', 'volume_used'].map(field => fieldErrors[`samples.${index}.${field}`]).filter(Boolean).join(' ')
+  const rowError = (index: number) => Object.entries(fieldErrors).filter(([key]) => key.startsWith(`samples.${index}.`)).map(([, message]) => message).join(' ')
   const otherError = save.error && !Object.keys(fieldErrors).some(key => key.startsWith('samples.')) ? (fieldErrors.execution_name ?? save.error.message) : null
 
   function addSample(sample: SampleRef) {
     setNotice(null)
-    setRows(current => [...current, { sample, result: '', volume: '', unit: definition.typical_volume_unit ?? '' }])
+    setRows(current => [...current, { sample, results: {}, volume: '', unit: definition.typical_volume_unit ?? '' }])
   }
 
   function setRow(index: number, changes: Partial<Row>) {
     setRows(current => current.map((row, i) => (i === index ? { ...row, ...changes } : row)))
   }
+
+  function setEntry(index: number, fieldId: number, changes: Partial<Entry>) {
+    setRows(current => current.map((row, i) => (i === index ? { ...row, results: { ...row.results, [fieldId]: { ...(row.results[fieldId] ?? BLANK), ...changes } } } : row)))
+  }
+
+  const fields = definition.result_fields
+  const filled = (row: Row) => Object.values(row.results).some(entry => entry.value.trim() || entry.interpretation.trim())
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -125,13 +149,16 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
       )}
       {imported.error && <p role="alert" className="border-b bg-destructive/5 px-3 py-2 text-xs text-destructive">{imported.error.message}</p>}
 
+      <div className="overflow-x-auto">
       <table className="w-full text-[13px]" aria-label="Samples in the new execution">
         <thead className="text-left text-xs text-muted-foreground">
           <tr>
             <th className="w-10 border-b px-3 py-1.5 font-medium">#</th>
             <th className="border-b px-2 py-1.5 font-medium">Sample</th>
             <th className="border-b px-2 py-1.5 font-medium">Type</th>
-            <th className="border-b px-2 py-1.5 font-medium">{definition.result_name ?? 'Result'}{definition.result_unit && <span className="font-normal"> ({definition.result_unit})</span>}</th>
+            {fields.map(field => (
+              <ResultHeads key={field.assay_definition_result_id} label={field.label} unit={field.unit} />
+            ))}
             <th className="border-b px-2 py-1.5 font-medium">Volume used{definition.typical_volume && <span className="font-normal"> · typical {Number(definition.typical_volume)} {definition.typical_volume_unit}</span>}</th>
             <th className="w-10 border-b px-2 py-1.5"><span className="sr-only">Remove</span></th>
           </tr>
@@ -147,9 +174,17 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
                   {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
                 </td>
                 <td className="border-b px-2 py-1 text-muted-foreground">{row.sample.sample_type}</td>
-                <td className="border-b px-2 py-1">
-                  <input aria-label={`Result for ${row.sample.sample_code}`} value={row.result} onChange={event => setRow(index, { result: event.target.value })} placeholder="blank until known" className={cn(inputClass, 'h-7 w-40 tabular-nums')} />
-                </td>
+                {fields.map(field => {
+                  const entry = row.results[field.assay_definition_result_id] ?? BLANK
+                  return [
+                    <td key={`${field.assay_definition_result_id}-value`} className="border-b px-2 py-1">
+                      <input aria-label={`${field.label} for ${row.sample.sample_code}`} value={entry.value} onChange={event => setEntry(index, field.assay_definition_result_id, { value: event.target.value })} placeholder="blank until known" className={cn(inputClass, 'h-7 w-28 tabular-nums')} />
+                    </td>,
+                    <td key={`${field.assay_definition_result_id}-interpretation`} className="border-b px-2 py-1">
+                      <input aria-label={`${field.label} interpretation for ${row.sample.sample_code}`} value={entry.interpretation} onChange={event => setEntry(index, field.assay_definition_result_id, { interpretation: event.target.value })} className={cn(inputClass, 'h-7 w-28')} />
+                    </td>,
+                  ]
+                })}
                 <td className="border-b px-2 py-1">
                   <span className="flex items-center gap-1">
                     <input aria-label={`Volume used from ${row.sample.sample_code}`} type="number" min="0" step="any" value={row.volume} onChange={event => setRow(index, { volume: event.target.value })} className={cn(inputClass, 'h-7 w-20 text-right tabular-nums')} />
@@ -164,7 +199,7 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
           })}
           <tr>
             <td className="px-3 py-2 text-xs text-muted-foreground tabular-nums">{rows.length + 1}</td>
-            <td colSpan={5} className="px-2 py-2">
+            <td colSpan={4 + fields.length * 2} className="px-2 py-2">
               <SampleFinder
                 samples={samples.data ?? []}
                 chosenIds={rows.map(row => row.sample.sample_id)}
@@ -177,10 +212,11 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
           </tr>
         </tbody>
       </table>
+      </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2 bg-muted/40 px-3 py-2">
         <span className="mr-auto text-xs text-muted-foreground tabular-nums">
-          {rows.length} {rows.length === 1 ? 'sample' : 'samples'}{rows.length > 0 && ` · ${rows.filter(row => row.result.trim()).length} with a result`}
+          {rows.length} {rows.length === 1 ? 'sample' : 'samples'}{rows.length > 0 && ` · ${rows.filter(filled).length} with results entered`}
         </span>
         {otherError && <p role="alert" className="text-xs text-destructive">{otherError}</p>}
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
@@ -198,4 +234,13 @@ function localDate(date: Date) {
 function localTime(date: Date) {
   const pad = (part: number) => String(part).padStart(2, '0')
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function ResultHeads({ label, unit }: { label: string; unit: string | null }) {
+  return (
+    <>
+      <th className="border-b px-2 py-1.5 font-medium whitespace-nowrap">{label}{unit && <span className="font-normal"> ({unit})</span>}</th>
+      <th className="border-b px-2 py-1.5 font-normal whitespace-nowrap">{label} interpretation</th>
+    </>
+  )
 }

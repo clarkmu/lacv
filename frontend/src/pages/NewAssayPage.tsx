@@ -39,7 +39,8 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
   const [performedBy, setPerformedBy] = useState('')
   const [volume, setVolume] = useState('')
   const [volumeUnit, setVolumeUnit] = useState(sample.quantity_unit ?? '')
-  const [result, setResult] = useState('')
+  // Typed values by result field id; anything left blank is sent as not entered.
+  const [results, setResults] = useState<Record<number, { value: string; interpretation: string }>>({})
   const [notes, setNotes] = useState('')
 
   const definitionList = definitions.data ?? []
@@ -50,6 +51,7 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
 
   function chooseDefinition(id: string) {
     setDefinitionId(id)
+    setResults({})
     const definition = definitionList.find(row => String(row.assay_definition_id) === id)
     if (definition?.typical_volume && canUseVolume && !volume) {
       setVolume(String(Number(definition.typical_volume)))
@@ -63,7 +65,17 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
       assay_date: date ? `${date}T${time || '00:00'}` : null,
       operator_name: performedBy || null,
       notes: notes || null,
-      samples: [{ sample_id: sample.sample_id, result: result.trim() || null, volume_used: volume ? volume : null, volume_unit: volume ? volumeUnit || null : null }],
+      samples: [{
+        sample_id: sample.sample_id,
+        results: (chosen?.result_fields ?? []).map(field => ({
+          assay_definition_result_id: field.assay_definition_result_id,
+          value: results[field.assay_definition_result_id]?.value.trim() || null,
+          interpretation: results[field.assay_definition_result_id]?.interpretation.trim() || null,
+          qc_status: null,
+        })),
+        volume_used: volume ? volume : null,
+        volume_unit: volume ? volumeUnit || null : null,
+      }],
     }),
     onSuccess: execution => {
       client.invalidateQueries({ queryKey: ['sample', String(sample.sample_id)] })
@@ -176,13 +188,29 @@ function RecordAssayForm({ sample }: { sample: SampleDetail }) {
           </div>
         </Section>
 
-        <Section title="Result" description="Leave it blank if it is not known yet; it can be entered later on the assay's page. A number is stored as a number; text such as “not detected” as text.">
-          <Field label={chosen?.result_name ?? 'Result'} htmlFor="assay-result" optional error={rowError('result')}>
-            <div className="flex items-center gap-2">
-              <Input id="assay-result" value={result} onChange={event => setResult(event.target.value)} placeholder="31.2 or not detected" aria-invalid={Boolean(rowError('result')) || undefined} className="h-8 w-48 text-[13px] tabular-nums" />
-              {chosen?.result_unit && <span className="text-xs text-muted-foreground">{chosen.result_unit}</span>}
-            </div>
-          </Field>
+        <Section title="Results" description="Leave any of them blank if the assay has not been read yet; they can be entered later on the assay's page. A number is stored as a number; text such as “not detected” as text.">
+          {chosen?.result_fields.length ? (
+            <table className="w-full max-w-2xl text-[13px]" aria-label="Results">
+              <thead className="text-left text-xs text-muted-foreground"><tr><th className="pb-1 font-medium">Result</th><th className="pb-1 font-medium">Value</th><th className="pb-1 font-medium">Interpretation</th></tr></thead>
+              <tbody>
+                {chosen.result_fields.map((field, index) => {
+                  const entry = results[field.assay_definition_result_id] ?? { value: '', interpretation: '' }
+                  const set = (changes: Partial<typeof entry>) => setResults(current => ({ ...current, [field.assay_definition_result_id]: { ...entry, ...changes } }))
+                  const error = rowError(`results.${index}.value`)
+                  return (
+                    <tr key={field.assay_definition_result_id}>
+                      <td className="py-0.5 pr-2 font-medium">{field.label}{field.unit && <span className="font-normal text-muted-foreground"> ({field.unit})</span>}</td>
+                      <td className="py-0.5 pr-2">
+                        <input aria-label={`${field.label} value`} value={entry.value} onChange={event => set({ value: event.target.value })} placeholder={field.value_type === 'numeric' ? 'e.g. 31.2' : '31.2 or not detected'} aria-invalid={Boolean(error) || undefined} className={cn(inputClass, 'w-40 tabular-nums')} />
+                        <FieldError message={error} />
+                      </td>
+                      <td className="py-0.5 pr-2"><input aria-label={`${field.label} interpretation`} value={entry.interpretation} onChange={event => set({ interpretation: event.target.value })} placeholder="e.g. negative" className={cn(inputClass, 'w-full')} /></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          ) : <p className="text-xs text-muted-foreground">{chosen ? 'This assay lists no result fields.' : 'Choose an assay to lay out its results.'}</p>}
         </Section>
 
         <Section title="Details" description="Anything a colleague would need to interpret this run.">
@@ -210,7 +238,7 @@ function DefinitionSummary({ definition }: { definition: AssayDefinition }) {
     ['Target', definition.target],
     ['Kit', definition.kit],
     ['Instrument', definition.instrument],
-    ['Result', definition.result_name && `${definition.result_name}${definition.result_unit ? ` (${definition.result_unit})` : ''}`],
+    ['Reports', definition.result_fields.map(field => field.label).join(', ')],
   ]
   return (
     <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
@@ -257,7 +285,7 @@ const STEPS = [
   { label: 'Sample', here: true },
   { label: 'Assay performed', here: true },
   { label: 'Volume used', here: true },
-  { label: 'Result', here: true },
+  { label: 'Results', here: true },
   { label: 'Derived samples', here: false },
 ]
 

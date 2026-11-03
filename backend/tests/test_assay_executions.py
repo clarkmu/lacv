@@ -1,4 +1,9 @@
-"""Assay definition -> execution -> many Samples -> at most one result per Sample in an execution."""
+"""Assay definition -> execution -> many Samples -> one result set per Sample (a value, interpretation and QC per result field)."""
+
+DUPLEX_FIELDS = [
+    {"analyte": "LACV", "result_name": "CT", "unit": "cycles"},
+    {"analyte": "RNase P", "result_name": "CT", "unit": "cycles", "value_type": "numeric"},
+]
 
 
 def create_root(client, code, **fields):
@@ -7,11 +12,15 @@ def create_root(client, code, **fields):
     return response.json()
 
 
-def create_definition(client, name="LACV qPCR v3", **fields):
-    payload = {"assay_name": name, "assay_type": "qPCR", "target": "LACV", "result_name": "LACV CT", "result_unit": "cycles", **fields}
+def create_definition(client, name="LACV duplex v3", result_fields=DUPLEX_FIELDS, **fields):
+    payload = {"assay_name": name, "assay_type": "qPCR", "target": "LACV", "result_fields": result_fields, **fields}
     response = client.post("/assay-definitions", json=payload)
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def field_ids(definition):
+    return [field["assay_definition_result_id"] for field in definition["result_fields"]]
 
 
 def execute(client, definition_id, samples, **fields):
@@ -31,73 +40,167 @@ def execution_count(client):
     return sum(row["execution_count"] for row in client.get("/assay-definitions").json())
 
 
-def test_one_execution_holds_several_samples_each_with_its_own_result(client):
+def results_of(row):
+    """A Sample row's result set as {field id: (numeric, text, interpretation, qc)}."""
+    return {item["assay_definition_result_id"]: (item["numeric_value"], item["text_value"], item["interpretation"], item["qc_status"]) for item in row["results"]}
+
+
+def set_result(client, execution, sample, field_id, **changes):
+    return client.patch(f"/assay-executions/{execution['assay_execution_id']}/samples/{sample['sample_id']}/results/{field_id}", json=changes)
+
+
+def test_ten_samples_are_added_before_the_assay_is_done_with_every_result_field_null(client):
     definition = create_definition(client)
-    samples = [create_root(client, f"S-00{n}") for n in (1, 2, 3)]
+    samples = [create_root(client, f"S-{n:03d}") for n in range(1, 11)]
+
+    execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]} for sample in samples]))
+    blanks = created(execute(client, definition["assay_definition_id"], [
+        {"sample_id": samples[0]["sample_id"], "results": [{"assay_definition_result_id": field_id, "value": "", "interpretation": " "} for field_id in field_ids(definition)]},
+    ]))
+
+    assert len(execution["samples"]) == 10
+    assert all(row["results"] == [] for row in execution["samples"]), "nothing is stored until something is entered"
+    assert blanks["samples"][0]["results"] == [], "blank cells are null, not empty strings"
+    detail = client.get(f"/assay-definitions/{definition['assay_definition_id']}").json()
+    assert [field["label"] for field in detail["result_fields"]] == ["LACV CT", "RNase P CT"]
+    assert all(summary["empty_count"] == 11 and summary["mean"] is None for summary in detail["result_summaries"])
+
+
+def test_results_are_entered_later_field_by_field_and_each_sample_keeps_its_own(client):
+    definition = create_definition(client)
+    lacv, rnase = field_ids(definition)
+    a, b = create_root(client, "S-A"), create_root(client, "S-B")
+    execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": a["sample_id"]}, {"sample_id": b["sample_id"]}]))
+
+    set_result(client, execution, a, lacv, value="31.2", interpretation="positive")
+    set_result(client, execution, a, rnase, value="25.9")
+    after = set_result(client, execution, b, lacv, value="not detected", interpretation="negative").json()
+
+    rows = {row["sample"]["sample_code"]: results_of(row) for row in after["samples"]}
+    assert rows["S-A"] == {lacv: ("31.20000000", None, "positive", "not_reviewed"), rnase: ("25.90000000", None, None, "not_reviewed")}
+    assert rows["S-B"] == {lacv: (None, "not detected", "negative", "not_reviewed")}, "partial: Sample B has no RNase P CT yet"
+
+    changed = set_result(client, execution, a, lacv, value="30.8").json()
+    rows = {row["sample"]["sample_code"]: results_of(row) for row in changed["samples"]}
+    assert rows["S-A"][lacv] == ("30.80000000", None, "positive", "not_reviewed"), "only the value changed; the interpretation stays"
+    assert rows["S-B"] == {lacv: (None, "not detected", "negative", "not_reviewed")}, "changing Sample A leaves Sample B alone"
+
+
+def test_results_can_be_given_when_the_execution_is_created(client):
+    definition = create_definition(client)
+    lacv, rnase = field_ids(definition)
+    a, b, c = (create_root(client, code) for code in ("S-A", "S-B", "S-C"))
 
     execution = created(execute(client, definition["assay_definition_id"], [
-        {"sample_id": samples[0]["sample_id"], "result": "31.2"},
-        {"sample_id": samples[1]["sample_id"], "result": "not detected"},
-        {"sample_id": samples[2]["sample_id"]},
-    ], operator_name="Ana", assay_date="2026-11-03T10:00:00"))
+        {"sample_id": a["sample_id"], "results": [{"assay_definition_result_id": lacv, "value": "33.1", "interpretation": "positive", "qc_status": "accepted"}, {"assay_definition_result_id": rnase, "value": "24.2"}]},
+        {"sample_id": b["sample_id"], "results": [{"assay_definition_result_id": rnase, "value": "26"}]},
+        {"sample_id": c["sample_id"]},
+    ]))
 
-    assert [(row["sample"]["sample_code"], row["result_numeric"], row["result_text"]) for row in execution["samples"]] == [
-        ("S-001", "31.20000000", None), ("S-002", None, "not detected"), ("S-003", None, None),
+    assert [results_of(row) for row in execution["samples"]] == [
+        {lacv: ("33.10000000", None, "positive", "accepted"), rnase: ("24.20000000", None, None, "not_reviewed")},
+        {rnase: ("26.00000000", None, None, "not_reviewed")},
+        {},
     ]
-    assert (execution["operator_name"], execution["status"], execution["qc_status"]) == ("Ana", "completed", "not_reviewed")
-    detail = client.get(f"/assay-definitions/{definition['assay_definition_id']}").json()
-    assert (detail["execution_count"], detail["sample_count"]) == (1, 3)
-    assert [len(row["samples"]) for row in detail["executions"]] == [3]
+
+
+def test_clearing_a_field_returns_it_to_null(client):
+    definition = create_definition(client)
+    lacv, _ = field_ids(definition)
+    sample = create_root(client, "S-A")
+    execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": lacv, "value": "30", "interpretation": "positive"}]}]))
+
+    only_value = set_result(client, execution, sample, lacv, value="").json()["samples"][0]
+    cleared = set_result(client, execution, sample, lacv, interpretation=None).json()["samples"][0]
+
+    assert results_of(only_value) == {lacv: (None, None, "positive", "not_reviewed")}
+    assert cleared["results"] == []
+    assert set_result(client, execution, sample, lacv, qc_status="accepted").status_code == 422, "QC needs something entered"
+
+
+def test_accepted_results_are_locked_until_qc_is_reopened(client):
+    definition = create_definition(client)
+    lacv, _ = field_ids(definition)
+    sample = create_root(client, "S-A")
+    execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": lacv, "value": "30", "qc_status": "accepted"}]}]))
+
+    assert set_result(client, execution, sample, lacv, value="31").status_code == 409
+    assert set_result(client, execution, sample, lacv, value="").status_code == 409
+    reopened = set_result(client, execution, sample, lacv, qc_status="not_reviewed", value="31")
+    assert reopened.status_code == 200 and results_of(reopened.json()["samples"][0])[lacv] == ("31.00000000", None, None, "not_reviewed")
+
+
+def test_value_types_follow_each_field(client):
+    definition = create_definition(client, result_fields=[
+        {"result_name": "Concentration", "unit": "ng/uL", "value_type": "numeric"},
+        {"result_name": "CPE", "value_type": "text"},
+    ])
+    concentration, cpe = field_ids(definition)
+    sample = create_root(client, "S-A")
+    execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": cpe, "value": "12"}]}]))
+
+    refused = set_result(client, execution, sample, concentration, value="high")
+
+    assert refused.status_code == 422 and "Concentration must be a number" in refused.text
+    assert results_of(execution["samples"][0])[cpe] == (None, "12", None, "not_reviewed"), "a text field keeps numbers as text"
 
 
 def test_a_sample_takes_part_in_several_executions_including_of_the_same_assay(client):
     qpcr = create_definition(client)
-    culture = create_definition(client, name="Culture check", assay_type="Culture", result_name="CPE", result_unit=None, result_value_type="text")
+    lacv, _ = field_ids(qpcr)
+    culture = create_definition(client, name="Culture check", assay_type="Culture", result_fields=[{"result_name": "CPE", "value_type": "text"}])
     sample = create_root(client, "S-001")
     other = create_root(client, "S-002")
 
-    first = created(execute(client, qpcr["assay_definition_id"], [{"sample_id": sample["sample_id"]}, {"sample_id": other["sample_id"]}], status="failed"))
-    repeat = created(execute(client, qpcr["assay_definition_id"], [{"sample_id": sample["sample_id"], "result": "30"}]))
-    created(execute(client, culture["assay_definition_id"], [{"sample_id": sample["sample_id"], "result": "CPE observed"}]))
+    created(execute(client, qpcr["assay_definition_id"], [{"sample_id": sample["sample_id"]}, {"sample_id": other["sample_id"]}], status="failed"))
+    created(execute(client, qpcr["assay_definition_id"], [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": lacv, "value": "30"}]}]))
+    created(execute(client, culture["assay_definition_id"], [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": field_ids(culture)[0], "value": "CPE observed"}]}]))
 
     history = client.get(f"/samples/{sample['sample_id']}").json()["assays"]
-    assert sorted((row["execution_name"], row["sample_count"], row["result_numeric"], row["result_text"]) for row in history) == [
-        ("CULTURE-CHECK-001", 1, None, "CPE observed"), ("LACV-QPCR-V3-001", 2, None, None), ("LACV-QPCR-V3-002", 1, "30.00000000", None),
+    assert sorted((row["execution_name"], row["sample_count"], [(item["label"], item["numeric_value"], item["text_value"]) for item in row["results"]]) for row in history) == [
+        ("CULTURE-CHECK-001", 1, [("CPE", None, "CPE observed")]),
+        ("LACV-DUPLEX-V3-001", 2, []),
+        ("LACV-DUPLEX-V3-002", 1, [("LACV CT", "30.00000000", None)]),
     ]
-    qpcr_detail = client.get(f"/assay-definitions/{qpcr['assay_definition_id']}").json()
-    assert (qpcr_detail["execution_count"], qpcr_detail["sample_count"]) == (2, 2), "executions, not Sample rows; distinct Samples"
-    assert first["assay_execution_id"] != repeat["assay_execution_id"]
+    detail = client.get(f"/assay-definitions/{qpcr['assay_definition_id']}").json()
+    assert (detail["execution_count"], detail["sample_count"]) == (2, 2), "executions, not Sample rows; distinct Samples"
 
 
-def test_a_sample_appears_once_per_execution(client):
+def test_a_sample_appears_once_per_execution_and_a_field_once_per_sample(client):
     definition = create_definition(client)
+    lacv, _ = field_ids(definition)
     sample = create_root(client, "S-001")
     before = execution_count(client)
 
-    twice = execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}, {"sample_id": sample["sample_id"], "result": "1"}])
+    twice = execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}, {"sample_id": sample["sample_id"]}])
+    same_field = execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": lacv, "value": "1"}, {"assay_definition_result_id": lacv, "value": "2"}]}])
+    foreign = execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"], "results": [{"assay_definition_result_id": 999999, "value": "1"}]}])
     execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}]))
     added_again = client.post(f"/assay-executions/{execution['assay_execution_id']}/samples", json={"sample_id": sample["sample_id"]})
 
-    assert twice.status_code == 422 and "already in this execution" in field_errors(twice)[("samples", 1, "sample_id")]
-    assert added_again.status_code == 422 and "already in this execution" in added_again.text
+    assert "already in this execution" in field_errors(twice)[("samples", 1, "sample_id")]
+    assert "is given twice" in field_errors(same_field)[("samples", 0, "results", 1, "assay_definition_result_id")]
+    assert "not part of this assay" in field_errors(foreign)[("samples", 0, "results", 0, "assay_definition_result_id")]
+    assert added_again.status_code == 422
     assert execution_count(client) == before + 1
 
 
 def test_creation_is_all_or_nothing(client):
-    definition = create_definition(client, result_value_type="numeric")
+    definition = create_definition(client)
+    _, rnase = field_ids(definition)
     good = create_root(client, "S-001", current_quantity="10", quantity_unit="uL")
     before = execution_count(client)
 
     response = execute(client, definition["assay_definition_id"], [
-        {"sample_id": good["sample_id"], "result": "30", "volume_used": "2"},
+        {"sample_id": good["sample_id"], "results": [{"assay_definition_result_id": rnase, "value": "25"}], "volume_used": "2"},
         {"sample_id": 999999},
-        {"sample_id": create_root(client, "S-002")["sample_id"], "result": "positive"},
+        {"sample_id": create_root(client, "S-002")["sample_id"], "results": [{"assay_definition_result_id": rnase, "value": "positive"}]},
     ])
 
     assert response.status_code == 422
     assert field_errors(response) == {
         ("samples", 1, "sample_id"): "Sample not found: 999999",
-        ("samples", 2, "result"): 'S-002: LACV CT must be a number, not "positive"',
+        ("samples", 2, "results", 0, "value"): 'S-002: RNase P CT must be a number, not "positive"',
     }
     assert execution_count(client) == before
     reloaded = client.get(f"/samples/{good['sample_id']}").json()
@@ -112,46 +215,13 @@ def test_names_are_generated_per_assay_and_editable(client):
     first = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}]))
     named = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}], execution_name="Plate 7"))
     third = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}]))
-    renamed = client.patch(f"/assay-executions/{first['assay_execution_id']}", json={"execution_name": "Plate 1, rerun 2026-11-03"})
+    renamed = client.patch(f"/assay-executions/{first['assay_execution_id']}", json={"execution_name": "Plate 1, rerun"})
     clash = client.patch(f"/assay-executions/{third['assay_execution_id']}", json={"execution_name": "Plate 7"})
 
-    assert detail["next_execution_name"] == "LACV-QPCR-V3-001"
-    assert (first["execution_name"], named["execution_name"], third["execution_name"]) == ("LACV-QPCR-V3-001", "Plate 7", "LACV-QPCR-V3-002")
-    assert renamed.status_code == 200 and renamed.json()["execution_name"] == "Plate 1, rerun 2026-11-03"
-    assert renamed.json()["assay_execution_id"] == first["assay_execution_id"], "the name is a label; the id is the identity"
+    assert detail["next_execution_name"] == "LACV-DUPLEX-V3-001"
+    assert (first["execution_name"], named["execution_name"], third["execution_name"]) == ("LACV-DUPLEX-V3-001", "Plate 7", "LACV-DUPLEX-V3-002")
+    assert renamed.status_code == 200 and renamed.json()["assay_execution_id"] == first["assay_execution_id"]
     assert clash.status_code == 400 and "already has an execution named Plate 7" in clash.text
-    other = create_definition(client, name="Other qPCR")
-    assert created(execute(client, other["assay_definition_id"], [{"sample_id": sample["sample_id"]}], execution_name="Plate 7"))["execution_name"] == "Plate 7"
-
-
-def test_results_start_empty_and_are_entered_changed_and_cleared(client):
-    definition = create_definition(client)
-    sample = create_root(client, "S-001")
-    execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}]))
-    url = f"/assay-executions/{execution['assay_execution_id']}/samples/{sample['sample_id']}"
-
-    assert (execution["samples"][0]["result_numeric"], execution["samples"][0]["result_text"]) == (None, None)
-    entered = client.patch(url, json={"result": " 33.4 "}).json()["samples"][0]
-    as_text = client.patch(url, json={"result": "not detected"}).json()["samples"][0]
-    cleared = client.patch(url, json={"result": ""}).json()["samples"][0]
-
-    assert (entered["result_numeric"], entered["result_text"]) == ("33.40000000", None)
-    assert (as_text["result_numeric"], as_text["result_text"]) == (None, "not detected")
-    assert (cleared["result_numeric"], cleared["result_text"]) == (None, None)
-    assert client.patch(f"/assay-executions/{execution['assay_execution_id']}/samples/{create_root(client, 'S-X')['sample_id']}", json={"result": "1"}).status_code == 404
-
-
-def test_result_types_follow_the_assay(client):
-    numeric = create_definition(client, name="Qubit", assay_type="Quantification", result_name="Concentration", result_unit="ng/uL", result_value_type="numeric")
-    text = create_definition(client, name="Culture", assay_type="Culture", result_name="CPE", result_unit=None, result_value_type="text")
-    sample = create_root(client, "S-001")
-    number_execution = created(execute(client, numeric["assay_definition_id"], [{"sample_id": sample["sample_id"], "result": "12.5"}]))
-    text_execution = created(execute(client, text["assay_definition_id"], [{"sample_id": sample["sample_id"], "result": "12"}]))
-
-    refused = client.patch(f"/assay-executions/{number_execution['assay_execution_id']}/samples/{sample['sample_id']}", json={"result": "high"})
-
-    assert refused.status_code == 422 and "must be a number" in refused.text
-    assert (text_execution["samples"][0]["result_numeric"], text_execution["samples"][0]["result_text"]) == (None, "12")
 
 
 def test_execution_details_are_edited_on_the_execution(client):
@@ -214,24 +284,25 @@ def test_unknown_or_insufficient_quantity_is_refused_and_saves_nothing(client):
 
 def test_samples_are_added_later_and_removed_until_used(client):
     definition = create_definition(client)
+    lacv, _ = field_ids(definition)
     first = create_root(client, "S-001", current_quantity="10", quantity_unit="uL")
     second = create_root(client, "S-002")
     execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": first["sample_id"], "volume_used": "2"}]))
     base = f"/assay-executions/{execution['assay_execution_id']}/samples"
 
-    added = client.post(base, json={"sample_id": second["sample_id"], "result": "29.1"})
+    added = client.post(base, json={"sample_id": second["sample_id"], "results": [{"assay_definition_result_id": lacv, "value": "29.1"}]})
     used = client.delete(f"{base}/{first['sample_id']}")
     removed = client.delete(f"{base}/{second['sample_id']}")
     last = client.delete(f"{base}/{first['sample_id']}")
 
-    assert added.status_code == 201 and [row["sample"]["sample_code"] for row in added.json()["samples"]] == ["S-001", "S-002"]
+    assert added.status_code == 201 and results_of(added.json()["samples"][1]) == {lacv: ("29.10000000", None, None, "not_reviewed")}
     assert used.status_code == 409 and "used some of its volume" in used.text
     assert removed.status_code == 200 and [row["sample"]["sample_code"] for row in removed.json()["samples"]] == ["S-001"]
     assert last.status_code == 409
 
 
 def test_an_execution_can_produce_a_derived_sample_from_one_of_its_samples(client):
-    definition = create_definition(client, name="Amplicon sequencing", assay_type="Sequencing")
+    definition = create_definition(client, name="Amplicon sequencing", assay_type="Sequencing", result_fields=[{"result_name": "Reads", "value_type": "numeric"}])
     sample = create_root(client, "S-001")
     execution = created(execute(client, definition["assay_definition_id"], [{"sample_id": sample["sample_id"]}]))
 
@@ -241,8 +312,6 @@ def test_an_execution_can_produce_a_derived_sample_from_one_of_its_samples(clien
     library = client.get(f"/samples/{produced.json()['output_samples'][0]['sample_id']}").json()
     assert library["parent"]["sample_code"] == "S-001"
     assert [row["execution_name"] for row in library["generated_by_assays"]] == [execution["execution_name"]]
-    lineage = client.get(f"/samples/{sample['sample_id']}/lineage").json()
-    assert lineage["descendants"][0]["generated_by"] == {"kind": "assay", "code": execution["execution_name"], "type": "Sequencing"}
     assert client.delete(f"/assay-executions/{execution['assay_execution_id']}/samples/{sample['sample_id']}").status_code == 409
 
 

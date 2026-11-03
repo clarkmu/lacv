@@ -13,7 +13,8 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const DEFINITIONS = [{
   assay_definition_id: 1, assay_code: 'LACV-QPCR-SYBR', assay_name: 'LACV qPCR (SYBR Green)', assay_type: 'qPCR', target: 'LACV', kit: null, instrument: null,
-  typical_volume: null, typical_volume_unit: null, result_name: 'LACV CT', result_unit: 'cycles', result_value_type: 'either', is_active: true,
+  typical_volume: null, typical_volume_unit: null, is_active: true,
+  result_fields: [{ assay_definition_result_id: 1, analyte: 'LACV', result_name: 'CT', unit: 'cycles', value_type: 'either', label: 'LACV CT' }],
   execution_count: 12, sample_count: 57, last_performed: null,
 }]
 

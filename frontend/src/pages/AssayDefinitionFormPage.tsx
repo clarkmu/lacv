@@ -1,6 +1,6 @@
 import { FormEvent, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Save } from 'lucide-react'
+import { Plus, Save, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,9 @@ import { distinct, Field, Section } from '../components/form'
 import { SuggestInput } from '../components/SuggestInput'
 import type { AssayDefinitionDraft, ResultValueType } from '../types'
 
+type FieldDraft = AssayDefinitionDraft['result_fields'][number]
+const EMPTY_FIELD: FieldDraft = { analyte: '', result_name: '', unit: '', value_type: 'either' }
+
 /** Create a reusable assay (/assays/new). Its executions are then run from the assay's page. */
 export function AssayDefinitionFormPage() {
   const navigate = useNavigate()
@@ -19,10 +22,12 @@ export function AssayDefinitionFormPage() {
   const definitions = useQuery({ queryKey: ['assay-definitions'], queryFn: () => api.listAssayDefinitions() })
   const [draft, setDraft] = useState<AssayDefinitionDraft>({
     assay_name: '', assay_type: '', target: '', kit: '', instrument: '', typical_volume: '', typical_volume_unit: 'uL', description: '',
-    result_name: '', result_unit: '', result_value_type: 'either',
+    result_fields: [{ ...EMPTY_FIELD }],
   })
   const submitting = useRef(false)
   const set = <K extends keyof AssayDefinitionDraft>(key: K, value: AssayDefinitionDraft[K]) => setDraft(current => ({ ...current, [key]: value }))
+
+  const setField = (index: number, changes: Partial<FieldDraft>) => set('result_fields', draft.result_fields.map((field, i) => (i === index ? { ...field, ...changes } : field)))
 
   const save = useMutation({
     mutationFn: () => {
@@ -30,6 +35,7 @@ export function AssayDefinitionFormPage() {
         ...draft,
         typical_volume: draft.typical_volume || null,
         typical_volume_unit: draft.typical_volume ? draft.typical_volume_unit : null,
+        result_fields: draft.result_fields.filter(field => field.result_name.trim()).map(field => ({ ...field, analyte: field.analyte || null, unit: field.unit || null })),
       })
     },
     onSuccess: definition => {
@@ -101,22 +107,33 @@ export function AssayDefinitionFormPage() {
           </div>
         </Section>
 
-        <Section title="Result" description="The one result each sample in an execution reports, e.g. LACV CT in cycles. Results are entered on the assay's page.">
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem_12rem]">
-            <Field label="Result name" htmlFor="definition-result-name" optional>
-              <Input id="definition-result-name" value={draft.result_name ?? ''} onChange={event => set('result_name', event.target.value)} placeholder="e.g. LACV CT" className="h-8 text-[13px]" />
-            </Field>
-            <Field label="Unit" htmlFor="definition-result-unit" optional>
-              <Input id="definition-result-unit" value={draft.result_unit ?? ''} onChange={event => set('result_unit', event.target.value)} placeholder="e.g. cycles" className="h-8 text-[13px]" />
-            </Field>
-            <Field label="Value" htmlFor="definition-result-type" hint="Only numbers are averaged.">
-              <select id="definition-result-type" value={draft.result_value_type} onChange={event => set('result_value_type', event.target.value as ResultValueType)} className={`${inputClass} w-full text-[13px]`}>
-                <option value="either">number or text</option>
-                <option value="numeric">number</option>
-                <option value="text">text</option>
-              </select>
-            </Field>
-          </div>
+        <Section title="Results reported" description="The result fields each sample in an execution reports, e.g. CT for analyte LACV in cycles. Each becomes a column on the assay's page; numeric ones are averaged.">
+          <table className="w-full text-[13px]" aria-label="Result fields">
+            <thead className="text-left text-xs text-muted-foreground">
+              <tr><th className="pb-1 font-medium">Analyte</th><th className="pb-1 font-medium">Result</th><th className="pb-1 font-medium">Unit</th><th className="pb-1 font-medium">Value</th><th className="sr-only">Remove</th></tr>
+            </thead>
+            <tbody>
+              {draft.result_fields.map((field, index) => (
+                <tr key={index}>
+                  <td className="py-0.5 pr-2"><input aria-label={`Analyte ${index + 1}`} value={field.analyte ?? ''} onChange={event => setField(index, { analyte: event.target.value })} className={`${inputClass} w-full`} placeholder="e.g. LACV" /></td>
+                  <td className="py-0.5 pr-2"><input aria-label={`Result name ${index + 1}`} value={field.result_name} onChange={event => setField(index, { result_name: event.target.value })} className={`${inputClass} w-full`} placeholder="e.g. CT" /></td>
+                  <td className="py-0.5 pr-2"><input aria-label={`Unit ${index + 1}`} value={field.unit ?? ''} onChange={event => setField(index, { unit: event.target.value })} className={`${inputClass} w-24`} placeholder="e.g. cycles" /></td>
+                  <td className="py-0.5 pr-2">
+                    <select aria-label={`Value type ${index + 1}`} value={field.value_type} onChange={event => setField(index, { value_type: event.target.value as ResultValueType })} className={inputClass}>
+                      <option value="either">number or text</option>
+                      <option value="numeric">number</option>
+                      <option value="text">text</option>
+                    </select>
+                  </td>
+                  <td className="py-0.5 text-right">
+                    <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Remove result field ${index + 1}`} onClick={() => set('result_fields', draft.result_fields.filter((_, i) => i !== index))}><X aria-hidden="true" /></Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Button type="button" variant="ghost" size="sm" className="mt-1 text-primary hover:text-primary" onClick={() => set('result_fields', [...draft.result_fields, { ...EMPTY_FIELD }])}><Plus aria-hidden="true" />Add result field</Button>
+          {fieldErrors.result_fields && <p role="alert" className="text-xs text-destructive">{fieldErrors.result_fields}</p>}
         </Section>
 
         <div className="flex flex-wrap items-center justify-end gap-3 bg-muted/40 px-4 py-3">

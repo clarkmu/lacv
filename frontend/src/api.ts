@@ -97,8 +97,9 @@ export const api = {
   listPerformedBy: () => request<string[]>('/assay-executions/performed-by'),
   updateAssayExecution: (executionId: number, changes: Record<string, unknown>) => patch<AssayExecution>(`/assay-executions/${executionId}`, changes),
   addExecutionSample: (executionId: number, payload: ExecutionSampleDraft) => post<AssayExecution>(`/assay-executions/${executionId}/samples`, payload),
-  /** Enter, change or clear one Sample's result; the backend decides whether it is a number or text. */
-  updateExecutionResult: (executionId: number, sampleId: number, result: string | null) => patch<AssayExecution>(`/assay-executions/${executionId}/samples/${sampleId}`, { result }),
+  /** Enter, change or clear one result field of one Sample; only the parts sent change. The backend decides number or text. */
+  updateExecutionResult: (executionId: number, sampleId: number, fieldId: number, changes: { value?: string | null; interpretation?: string | null; qc_status?: string }) =>
+    patch<AssayExecution>(`/assay-executions/${executionId}/samples/${sampleId}/results/${fieldId}`, changes),
   removeExecutionSample: (executionId: number, sampleId: number) => request<AssayExecution>(`/assay-executions/${executionId}/samples/${sampleId}`, { method: 'DELETE' }),
 
   listStorageLocations: () => request<StorageLocation[]>('/storage-locations'),

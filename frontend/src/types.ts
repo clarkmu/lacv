@@ -129,9 +129,8 @@ export type AssaySummary = {
   qc_status: string
   assay_date: string | null
   sample_count?: number
-  result_numeric?: string | null
-  result_text?: string | null
-  result_unit?: string | null
+  /** This Sample's result set in the execution: the fields entered so far. */
+  results?: { label: string; unit: string | null; numeric_value: string | null; text_value: string | null; interpretation: string | null; qc_status: string }[]
 }
 
 export type StorageEvent = {
@@ -242,7 +241,18 @@ export type ProcessEventDetail = {
 
 export type ResultValueType = 'numeric' | 'text' | 'either'
 
-/** A reusable assay procedure and the one result each Sample in an execution reports. */
+/** A result field an assay reports, e.g. CT for analyte LACV. */
+export type ResultField = {
+  assay_definition_result_id: number
+  analyte: string | null
+  result_name: string
+  unit: string | null
+  value_type: ResultValueType
+  /** "<analyte> <result_name>", e.g. "LACV CT". */
+  label: string
+}
+
+/** A reusable assay procedure and the result fields each Sample in an execution reports. */
 export type AssayDefinition = {
   assay_definition_id: number
   assay_code: string
@@ -253,9 +263,7 @@ export type AssayDefinition = {
   instrument: string | null
   typical_volume: string | null
   typical_volume_unit: string | null
-  result_name: string | null
-  result_unit: string | null
-  result_value_type: ResultValueType
+  result_fields: ResultField[]
   is_active: boolean
 }
 
@@ -267,12 +275,20 @@ export type AssayDefinitionListItem = AssayDefinition & {
   last_performed: string | null
 }
 
-/** A Sample in an execution and its one result (both result fields null until entered). */
+/** One entered field of a Sample's result set. */
+export type ExecutionResult = {
+  assay_definition_result_id: number
+  numeric_value: string | null
+  text_value: string | null
+  interpretation: string | null
+  qc_status: string
+}
+
+/** A Sample in an execution and its result set: one entry per field entered so far (none until the assay is done). */
 export type ExecutionSample = {
   assay_execution_sample_id: number
   sample: SampleRef
-  result_numeric: string | null
-  result_text: string | null
+  results: ExecutionResult[]
   volume_used: string | null
   volume_unit: string | null
 }
@@ -292,13 +308,15 @@ export type AssayExecution = {
   data_files: DataFile[]
 }
 
-/** The mean of the numeric results so far; empty and text results are counted but never averaged. */
-export type NumericResultSummary = {
+/** One result field's mean over the numeric values so far; blank and text values are counted but never averaged. */
+export type ResultFieldSummary = {
+  assay_definition_result_id: number
+  label: string
+  unit: string | null
   mean: string | null
   numeric_count: number
   text_count: number
   empty_count: number
-  unit: string | null
   averageable: boolean
 }
 
@@ -306,7 +324,7 @@ export type AssayDefinitionDetail = AssayDefinitionListItem & {
   description: string | null
   created_at: string
   next_execution_name: string
-  result_summary: NumericResultSummary
+  result_summaries: ResultFieldSummary[]
   executions: AssayExecution[]
 }
 
@@ -319,15 +337,21 @@ export type AssayDefinitionDraft = {
   typical_volume: string | null
   typical_volume_unit: string | null
   description: string | null
-  result_name: string | null
-  result_unit: string | null
-  result_value_type: ResultValueType
+  result_fields: { analyte: string | null; result_name: string; unit: string | null; value_type: ResultValueType }[]
 }
 
-/** A Sample row of a new execution, as sent: the result as typed (blank for not yet known). */
+/** One result field for one Sample, as typed; blank parts are not entered. */
+export type ExecutionResultInput = {
+  assay_definition_result_id: number
+  value: string | null
+  interpretation: string | null
+  qc_status: string | null
+}
+
+/** A Sample row of a new execution, as sent: any result fields typed so far (none if the assay is not done yet). */
 export type ExecutionSampleDraft = {
   sample_id: number
-  result: string | null
+  results: ExecutionResultInput[]
   volume_used: string | null
   volume_unit: string | null
 }
@@ -336,7 +360,7 @@ export type ExecutionImportRow = {
   row_number: number
   sample_code: string | null
   sample: SampleRef | null
-  result: string | null
+  results: ExecutionResultInput[]
   volume_used: string | null
   volume_unit: string | null
   problems: string[]

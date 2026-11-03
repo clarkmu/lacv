@@ -12,7 +12,7 @@ LACV is not intended to recreate a full commercial LIMS such as Senaite or Bench
 - Keeps one lineage tree: each Sample has at most one parent Sample and any number of child Samples. Children never inherit field values; only the parent link is set.
 - Records process events that consume input Samples and create derived output Samples (homogenization, extraction, cDNA, library preparation, pooling).
 - Treats aliquoting as a process: it records the aliquoting event, consumes quantity from the parent, and creates one derived Sample per aliquot.
-- Defines assays once as reusable procedures (type, target, kit, instrument, typical volume, and the one result each sample reports) and records executions of them: one execution (a run or plate) holds one or more Samples, each with zero or one result, plus the volume it used. An execution has a durable ID and an editable name, its date, performed by, status, QC and notes. Executions are created on the assay's page, row by row or from an `.xlsx` workbook (preview, then save), and results are entered there inline; the page shows the mean of the numeric results. An execution can also produce derived Samples (for example a sequencing library).
+- Defines assays once as reusable procedures (type, target, kit, instrument, typical volume, and the result fields each sample reports, such as LACV CT and RNase P CT) and records executions of them: one execution (a run or plate) holds one or more Samples, each with one result set (a value, interpretation and QC per result field, all empty until entered) and the volume it used. An execution has a durable ID and an editable name, its date, performed by, status, QC and notes. Executions are created on the assay's page, row by row or from an `.xlsx` workbook (preview, then save), and results are entered there inline; the page shows a mean for each numeric result field. An execution can also produce derived Samples (for example a sequencing library).
 - Tracks each Sample's current storage location plus its storage movement and quantity history.
 - Shows how much of each Sample remains: starting quantity minus removals from that Sample (process and aliquot inputs, amounts taken to create a child, volume used by assay executions, downward adjustments), from the Sample's own quantity ledger. Using a child never gives quantity back to its parent. If the ledger does not chain from the starting quantity to the current one, or mixes incompatible units, the Sample page says so and shows no percentage.
 - Attaches data file references to Samples and assay executions.
@@ -27,7 +27,7 @@ LACV is not intended to recreate a full commercial LIMS such as Senaite or Bench
 ```text
 Sample ──parent_sample_id──> Sample            (one parent, many children)
   ├─ Process Event (inputs) ──> derived Sample(s) (outputs)
-  ├─ Assay execution sample (its result) ──> Assay execution ──> Assay definition
+  ├─ Assay execution sample (its result set) ──> Assay execution ──> Assay definition
   │       └─> derived Sample(s) (assay outputs of the execution)
   ├─ Storage Location / Storage Event(s)
   ├─ Quantity Event(s)
@@ -35,12 +35,13 @@ Sample ──parent_sample_id──> Sample            (one parent, many childre
 ```
 
 ```text
-Assay definition (reusable procedure: type, target, kit, instrument, typical volume, the one result it reports)
+Assay definition (reusable procedure: type, target, kit, instrument, typical volume)
+  ├─ Result fields (e.g. LACV CT in cycles, RNase P CT; number, text or either)
   └─ Assay execution (one run: ID, editable name, date, performed by, status, QC, notes)
-       └─ Sample (once per execution) ──> zero or one result
+       └─ Sample (once per execution) ──> its result set: per field, a value, interpretation and QC
 ```
 
-An assay definition (`assay_definitions`) is the procedure, defined once, with its result specification (name, unit, number or text). An execution (`assay_executions`) is one run of it: `assay_execution_id` is its identity, and `execution_name` (generated as `<assay code>-NNN`, unique within the assay) is an editable label. Its Samples are rows of `assay_execution_samples`, unique per execution and Sample, each holding the Sample's result as `result_numeric` or `result_text` (both empty until entered). A Sample can take part in any number of executions, including several of the same assay. Volume used is that Sample's quantity-ledger row linked to the execution; data files and derived Samples belong to the execution. Migration `20261103_0007` converted the earlier one-Sample executions and their result rows into this shape, writing any result that no longer fits into the execution's notes.
+An assay definition (`assay_definitions`) is the procedure, defined once; its result fields are `assay_definition_results` (analyte, result name, unit, value type). An execution (`assay_executions`) is one run of it: `assay_execution_id` is its identity, and `execution_name` (generated as `<assay code>-NNN`, unique within the assay) is an editable label. Its Samples are rows of `assay_execution_samples`, unique per execution and Sample. A Sample's result set in an execution is its `assay_execution_results` rows, at most one per result field, each with `numeric_value` or `text_value`, `interpretation` and `qc_status`; a field with nothing entered has no row, so a Sample can join an execution before the assay is done. A QC-accepted value is locked until its QC is reopened. A Sample can take part in any number of executions, including several of the same assay. Volume used is that Sample's quantity-ledger row linked to the execution; data files and derived Samples belong to the execution. Migration `20261103_0007` converted one-Sample executions into this shape; `20261104_0008` restored the assays' result fields and each result's interpretation and QC, reading back what 0007 had kept in notes.
 
 `subject_code` is the study subject (participant) a Sample came from: a plain identifier, not a subject registry. `aliquot_number` tells apart the tubes received for one subject's collection of one Material (sample type); within a batch, two such tubes cannot share a number.
 
@@ -171,9 +172,9 @@ The React application is a static browser application, so there is no frontend-s
 - Sample workspace: inline field editing (Enter or leaving a field saves, Esc cancels), lineage tree, child samples, process history, assays, storage and quantity history, files, and legacy identifiers.
 - Sample actions: create root sample, add child sample, aliquot, record a process (homogenization, RNA extraction, reverse transcription, library preparation, other), record an assay, delete when nothing depends on the sample.
 - Assays: the list of reusable assay definitions and creating one.
-- The assay's page is its workspace: the procedure (read-only), the mean of the numeric results (blank and text results counted, never averaged), and every execution grouped by its ID, with one row per Sample and its result edited in place. Executions can be filtered, renamed, have their details edited, gain or lose Samples (a Sample whose volume was used stays). Links to an execution from elsewhere open `/assays/<id>#execution-<execution id>`.
-- New execution, on the assay's page: a generated, editable name, date, performed by and notes, then a spreadsheet of Samples found by code, label or legacy code (each once), each with an optional result and volume used, saved together or not at all. Its rows can come from an `.xlsx` workbook (template download; a Samples sheet with sample_code, result, volume_used, volume_unit and an optional Execution sheet), previewed with every problem listed by sheet and row before anything is saved.
-- Recording an assay from a Sample's page: choose an assay, date and time, performed by (suggestions from earlier names, or any new name), volume used (deducted from the Sample's availability) and an optional result; this creates a one-Sample execution that can be extended on the assay's page.
+- The assay's page is its workspace: the procedure (read-only), a mean per numeric result field (blank and text values counted, never averaged), and every execution grouped by its ID, with one row per Sample and a value, interpretation and QC column for each result field, edited in place. Executions can be filtered, renamed, have their details edited, gain or lose Samples (a Sample whose volume was used stays). Links to an execution from elsewhere open `/assays/<id>#execution-<execution id>`.
+- New execution, on the assay's page: a generated, editable name, date, performed by and notes, then a spreadsheet of Samples found by code, label or legacy code (each once), each with optional values and interpretations for every result field and a volume used, saved together or not at all. Its rows can come from an `.xlsx` workbook (template download; a Samples sheet with sample_code, a column per result field plus optional `<field> interpretation` and `<field> qc_status` columns, volume_used, volume_unit, and an optional Execution sheet; every result column may be blank), previewed with every problem listed by sheet and row before anything is saved.
+- Recording an assay from a Sample's page: choose an assay, date and time, performed by (suggestions from earlier names, or any new name), volume used (deducted from the Sample's availability) and optional values for each result field; this creates a one-Sample execution that can be extended on the assay's page.
 - Batch detail: the batch's root samples as an editable table (subject, Material, aliquot number, external ID, dates, quantity, storage, status), with values set on several selected rows at once, aliquot numbering in table order, and one all-or-nothing save.
 - Storage location list, creation, detail, and editing.
 
@@ -214,6 +215,16 @@ cd ~/code/lacv && deploy/backup-db.sh --label manual
 ```
 
 It writes `~/lacv-backups/lacv-<UTC timestamp>-<label>.dump` with `pg_dump -Fc`, outside the Git checkout, readable only by you. It fails if `pg_dump` fails or the file is empty, and keeps the file only after `pg_restore --list` can read it. Old backups are never deleted automatically.
+
+### Reseeding the development data
+
+The Spark's database holds development data. To replace it with the current `database/schema.sql` and `database/seed.sql`:
+
+```bash
+cd ~/code/lacv && deploy/reseed-db.sh
+```
+
+It asks you to type the database name, backs the database up first (`~/lacv-backups/lacv-<timestamp>-before-reseed.dump`), stops the backend, drops and recreates the database, loads the schema and seed, starts the backend, and prints the Alembic revision and row counts. Everything in the database is replaced; the backup is the only copy of what was there. `--yes` skips the prompt. It never deletes Docker volumes; to go back, restore the backup (see "Restoring a backup").
 
 ### When a deployment fails
 

@@ -7,12 +7,12 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { api, ApiError } from '../api'
-import { resultText } from '../assayResults'
+import { valueText } from '../assayResults'
 import { NewExecution } from '../components/assay/NewExecution'
 import { SampleFinder } from '../components/assay/SampleFinder'
 import { inputClass, Panel, QuantityValue, SampleLink, SecondaryCode, StatusBadge } from '../components/common'
 import { formatDateTime } from '../format'
-import type { AssayDefinitionDetail, AssayExecution, ExecutionSample } from '../types'
+import type { AssayDefinitionDetail, AssayExecution, ExecutionResult, ExecutionSample, ResultField } from '../types'
 
 const VALUE_TYPES = { either: 'number or text', numeric: 'number', text: 'text' }
 const STATUSES = ['completed', 'failed', 'in_progress', 'cancelled']
@@ -61,7 +61,11 @@ function AssayWorkspace({ definition }: { definition: AssayDefinitionDetail }) {
           <dl className="grid gap-x-8 text-[13px] sm:grid-cols-2 xl:grid-cols-3">
             <Detail label="Type">{definition.assay_type}</Detail>
             <Detail label="Target">{definition.target}</Detail>
-            <Detail label="Result">{definition.result_name && <>{definition.result_name}{definition.result_unit && <span className="text-muted-foreground"> ({definition.result_unit})</span>} <span className="text-muted-foreground">· {VALUE_TYPES[definition.result_value_type]}</span></>}</Detail>
+            <Detail label="Results reported" wide>{definition.result_fields.length > 0 && (
+              <span className="flex flex-wrap gap-x-4 gap-y-0.5">
+                {definition.result_fields.map(field => <span key={field.assay_definition_result_id}>{field.label}{field.unit && <span className="text-muted-foreground"> ({field.unit})</span>} <span className="text-muted-foreground">· {VALUE_TYPES[field.value_type]}</span></span>)}
+              </span>
+            )}</Detail>
             <Detail label="Kit">{definition.kit}</Detail>
             <Detail label="Instrument">{definition.instrument}</Detail>
             <Detail label="Typical volume"><QuantityValue value={definition.typical_volume} unit={definition.typical_volume_unit} /></Detail>
@@ -84,24 +88,34 @@ function AssayWorkspace({ definition }: { definition: AssayDefinitionDetail }) {
   )
 }
 
-/** The mean of numeric results, with what it is and is not based on, so a blank or text result is never mistaken for a zero. */
+/** A mean per numeric result field, with what it is and is not based on, so a blank or text value is never mistaken for a zero. */
 function ResultSummary({ definition }: { definition: AssayDefinitionDetail }) {
-  const { mean, numeric_count: numeric, text_count: text, empty_count: empty, unit, averageable } = definition.result_summary
   return (
-    <Panel title={`Average ${definition.result_name ?? 'result'}`} label="Average result">
-      {!averageable ? (
-        <p className="text-[13px] text-muted-foreground">This assay's result is text, so there is no average.</p>
+    <Panel title="Averages" label="Averages" bodyClassName="p-0">
+      {definition.result_summaries.length === 0 ? (
+        <p className="px-3 py-3 text-[13px] text-muted-foreground">This assay lists no result fields.</p>
       ) : (
-        <>
-          <p className="text-2xl font-semibold tracking-tight tabular-nums" aria-label="Average">
-            {mean === null ? <span className="text-muted-foreground">—</span> : <>{formatMean(mean)}{unit && <span className="ml-1 text-sm font-normal text-muted-foreground">{unit}</span>}</>}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-            {numeric ? `Mean of ${plural(numeric, 'numeric result')}` : 'No numeric results yet'}
-            {text > 0 && `; ${text} text not averaged`}
-            {empty > 0 && `; ${empty} not entered`}
-          </p>
-        </>
+        <dl className="divide-y text-[13px]">
+          {definition.result_summaries.map(summary => (
+            <div key={summary.assay_definition_result_id} aria-label={`Average ${summary.label}`} className="px-3 py-2">
+              <dt className="text-xs text-muted-foreground">{summary.label}</dt>
+              <dd>
+                {!summary.averageable ? <span className="text-muted-foreground">Text result; not averaged</span> : (
+                  <>
+                    <span className="text-lg font-semibold tracking-tight tabular-nums">
+                      {summary.mean === null ? <span className="text-muted-foreground">—</span> : <>{formatMean(summary.mean)}{summary.unit && <span className="ml-1 text-xs font-normal text-muted-foreground">{summary.unit}</span>}</>}
+                    </span>
+                    <span className="ml-2 text-xs text-muted-foreground tabular-nums">
+                      {summary.numeric_count ? `mean of ${summary.numeric_count}` : 'no numeric values yet'}
+                      {summary.text_count > 0 && `; ${summary.text_count} text not averaged`}
+                      {summary.empty_count > 0 && `; ${summary.empty_count} not entered`}
+                    </span>
+                  </>
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
       )}
     </Panel>
   )
@@ -137,11 +151,14 @@ function Executions({ definition }: { definition: AssayDefinitionDetail }) {
       ) : (
         <div className="overflow-x-auto rounded-md border bg-card shadow-xs">
           <table className="w-full min-w-[40rem] text-[13px]" aria-label="Executions and their samples">
+            <colgroup><col className="w-56" /></colgroup>
             <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
               <tr>
                 <th className="border-b px-3 py-1.5 font-medium">Sample</th>
                 <th className="border-b px-2 py-1.5 font-medium">Type</th>
-                <th className="border-b px-2 py-1.5 font-medium">{definition.result_name ?? 'Result'}{definition.result_unit && <span className="font-normal"> ({definition.result_unit})</span>}</th>
+                {definition.result_fields.map(field => (
+                  <FieldHeads key={field.assay_definition_result_id} field={field} />
+                ))}
                 <th className="border-b px-2 py-1.5 text-right font-medium">Volume used</th>
                 <th className="w-10 border-b px-2 py-1.5"><span className="sr-only">Remove</span></th>
               </tr>
@@ -149,7 +166,7 @@ function Executions({ definition }: { definition: AssayDefinitionDetail }) {
             {executions.map(execution => (
               <ExecutionGroup key={execution.assay_execution_id} definition={definition} execution={execution} focused={focused === String(execution.assay_execution_id)} />
             ))}
-            {executions.length === 0 && <tbody><tr><td colSpan={5} className="px-3 py-4 text-sm text-muted-foreground">No executions match your filter.</td></tr></tbody>}
+            {executions.length === 0 && <tbody><tr><td colSpan={columnCount(definition)} className="px-3 py-4 text-sm text-muted-foreground">No executions match your filter.</td></tr></tbody>}
           </table>
         </div>
       )}
@@ -182,7 +199,7 @@ function ExecutionGroup({ definition, execution, focused }: { definition: AssayD
   return (
     <tbody id={`execution-${execution.assay_execution_id}`} aria-label={`Execution ${execution.assay_execution_id}`} className={cn('scroll-mt-20 border-t-2 border-border', focused && 'bg-accent/30')}>
       <tr className="bg-muted/40">
-        <th colSpan={5} scope="rowgroup" className="px-3 py-1.5 text-left font-normal">
+        <th colSpan={columnCount(definition)} scope="rowgroup" className="px-3 py-1.5 text-left font-normal">
           {editing ? (
             <ExecutionDetailsEditor execution={execution} pending={update.isPending} error={update.error} onSave={changes => update.mutate(changes)} onCancel={() => { setEditing(false); update.reset() }} />
           ) : (
@@ -258,9 +275,11 @@ function SampleRow({ definition, execution, row }: { definition: AssayDefinition
   const remove = useMutation({ mutationFn: () => api.removeExecutionSample(execution.assay_execution_id, row.sample.sample_id), onSuccess: saved })
   return (
     <tr className="hover:bg-muted/30">
-      <td className="border-b py-1 pr-2 pl-6"><SampleLink sample={row.sample} /></td>
+      <td className="border-b py-1 pr-2 pl-6 whitespace-nowrap"><SampleLink sample={row.sample} /></td>
       <td className="border-b px-2 py-1 text-muted-foreground">{row.sample.sample_type}</td>
-      <td className="border-b px-2 py-0.5"><ResultCell definition={definition} execution={execution} row={row} /></td>
+      {definition.result_fields.map(field => (
+        <ResultCells key={field.assay_definition_result_id} definition={definition} execution={execution} row={row} field={field} />
+      ))}
       <td className="border-b px-2 py-1 text-right">{row.volume_used !== null ? <QuantityValue value={row.volume_used} unit={row.volume_unit} /> : <span className="text-muted-foreground/60">—</span>}</td>
       <td className="border-b px-2 py-1 text-right">
         {remove.error && <span role="alert" className="mr-1 text-xs text-destructive">{remove.error.message}</span>}
@@ -274,44 +293,85 @@ function SampleRow({ definition, execution, row }: { definition: AssayDefinition
   )
 }
 
-/** A result edited in place: Enter or leaving the cell saves, Escape puts the saved value back. Blank clears it. */
-function ResultCell({ definition, execution, row }: { definition: AssayDefinitionDetail; execution: AssayExecution; row: ExecutionSample }) {
+/** Sample, Type, a value / interpretation / QC trio per result field, Volume used, Remove. */
+function columnCount(definition: AssayDefinitionDetail) {
+  return 4 + definition.result_fields.length * 3
+}
+
+function FieldHeads({ field }: { field: ResultField }) {
+  return (
+    <>
+      <th className="border-b border-l px-2 py-1.5 font-medium whitespace-nowrap">{field.label}{field.unit && <span className="font-normal"> ({field.unit})</span>}</th>
+      <th className="border-b px-2 py-1.5 font-normal whitespace-nowrap">Interpretation</th>
+      <th className="border-b px-2 py-1.5 font-normal whitespace-nowrap">QC</th>
+    </>
+  )
+}
+
+/** One result field of one Sample: value, interpretation and QC, each saved on its own. An unentered field shows as blank. */
+function ResultCells({ definition, execution, row, field }: { definition: AssayDefinitionDetail; execution: AssayExecution; row: ExecutionSample; field: ResultField }) {
   const saved = useExecutionSaved(definition)
-  const stored = resultText(row)
+  const result: ExecutionResult | undefined = row.results.find(item => item.assay_definition_result_id === field.assay_definition_result_id)
+  const save = useMutation({
+    mutationFn: (changes: { value?: string | null; interpretation?: string | null; qc_status?: string }) =>
+      api.updateExecutionResult(execution.assay_execution_id, row.sample.sample_id, field.assay_definition_result_id, changes),
+    onSuccess: saved,
+  })
+  const message = save.error instanceof ApiError ? Object.values(save.error.fieldErrors)[0] ?? save.error.message : save.error?.message
+  const where = `${row.sample.sample_code} in execution ${execution.assay_execution_id}`
+  return (
+    <>
+      <td className="border-b border-l px-1 py-0.5">
+        <EditableText label={`${field.label} for ${where}`} stored={valueText(result)} numeric={result?.numeric_value != null} pending={save.isPending} error={message} onSave={value => save.mutate({ value })} />
+        {message && <p role="alert" className="px-1.5 text-xs text-destructive">{message}</p>}
+      </td>
+      <td className="border-b px-1 py-0.5">
+        <EditableText label={`${field.label} interpretation for ${where}`} stored={result?.interpretation ?? ''} pending={save.isPending} onSave={interpretation => save.mutate({ interpretation })} narrow />
+      </td>
+      <td className="border-b px-1 py-0.5">
+        {result ? (
+          <select aria-label={`${field.label} QC for ${where}`} value={result.qc_status} disabled={save.isPending} onChange={event => save.mutate({ qc_status: event.target.value })} className="h-7 rounded-sm border border-transparent bg-transparent px-1 text-xs hover:border-input focus-visible:border-ring focus-visible:outline-none">
+            {[...new Set([...QC_STATES, result.qc_status])].map(value => <option key={value} value={value}>{value}</option>)}
+          </select>
+        ) : <span className="px-1.5 text-xs text-muted-foreground/50">—</span>}
+      </td>
+    </>
+  )
+}
+
+/** Text edited in place: Enter or leaving the cell saves, Escape puts the saved text back. Blank clears it. */
+function EditableText({ label, stored, onSave, pending, error, numeric = false, narrow = false }: {
+  label: string; stored: string; onSave: (value: string | null) => void; pending: boolean; error?: string; numeric?: boolean; narrow?: boolean
+}) {
   const [value, setValue] = useState(stored)
   useEffect(() => setValue(stored), [stored])
-  const save = useMutation({ mutationFn: (result: string | null) => api.updateExecutionResult(execution.assay_execution_id, row.sample.sample_id, result), onSuccess: saved })
-  const message = save.error instanceof ApiError ? save.error.fieldErrors.result ?? save.error.message : save.error?.message
 
   function commit() {
-    if (value.trim() !== stored && !save.isPending) save.mutate(value.trim() || null)
+    if (value.trim() !== stored && !pending) onSave(value.trim() || null)
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === 'Enter') { event.preventDefault(); commit() }
-    if (event.key === 'Escape') { setValue(stored); save.reset() }
+    if (event.key === 'Escape') setValue(stored)
   }
 
   return (
-    <span className="flex items-center gap-2">
-      <input
-        aria-label={`Result for ${row.sample.sample_code} in execution ${execution.assay_execution_id}`}
-        value={value}
-        placeholder="not entered"
-        onChange={event => setValue(event.target.value)}
-        onBlur={commit}
-        onKeyDown={onKeyDown}
-        aria-invalid={Boolean(message) || undefined}
-        title={message}
-        className={cn(
-          'h-7 w-44 rounded-sm border border-transparent bg-transparent px-1.5 tabular-nums placeholder:text-muted-foreground/60 hover:border-input focus-visible:border-ring focus-visible:bg-card focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none',
-          row.result_numeric !== null && 'font-medium',
-          message && 'border-destructive bg-destructive/5',
-        )}
-      />
-      {save.isPending && <span className="text-xs text-muted-foreground">Saving…</span>}
-      {message && <span role="alert" className="text-xs text-destructive">{message}</span>}
-    </span>
+    <input
+      aria-label={label}
+      value={value}
+      placeholder="—"
+      onChange={event => setValue(event.target.value)}
+      onBlur={commit}
+      onKeyDown={onKeyDown}
+      aria-invalid={Boolean(error) || undefined}
+      title={error}
+      className={cn(
+        'h-7 rounded-sm border border-transparent bg-transparent px-1.5 placeholder:text-muted-foreground/40 hover:border-input focus-visible:border-ring focus-visible:bg-card focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none',
+        narrow ? 'w-28' : 'w-28 tabular-nums',
+        numeric && 'font-medium',
+        error && 'border-destructive bg-destructive/5',
+      )}
+    />
   )
 }
 
@@ -320,12 +380,12 @@ function AddSampleRow({ definition, execution, onDone }: { definition: AssayDefi
   const samples = useQuery({ queryKey: ['samples', { rootOnly: false }], queryFn: () => api.listSamples() })
   const [notice, setNotice] = useState<string | null>(null)
   const add = useMutation({
-    mutationFn: (sampleId: number) => api.addExecutionSample(execution.assay_execution_id, { sample_id: sampleId, result: null, volume_used: null, volume_unit: null }),
+    mutationFn: (sampleId: number) => api.addExecutionSample(execution.assay_execution_id, { sample_id: sampleId, results: [], volume_used: null, volume_unit: null }),
     onSuccess: data => { saved(data); onDone() },
   })
   return (
     <tr>
-      <td colSpan={5} className="border-b py-1.5 pr-2 pl-6">
+      <td colSpan={columnCount(definition)} className="border-b py-1.5 pr-2 pl-6">
         <div className="flex flex-wrap items-center gap-2">
           <SampleFinder
             samples={samples.data ?? []}

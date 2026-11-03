@@ -21,12 +21,15 @@ const DEFINITIONS = [
   {
     assay_definition_id: 3, assay_code: 'LACV-RNASEP-DUPLEX', assay_name: 'LACV / RNase P duplex', assay_type: 'qPCR', target: 'LACV',
     kit: 'TaqPath', instrument: 'QuantStudio 5', typical_volume: '5.000000', typical_volume_unit: 'uL', is_active: true, execution_count: 4, sample_count: 4, last_performed: null,
-    result_name: 'LACV CT', result_unit: 'cycles', result_value_type: 'either',
+    result_fields: [
+      { assay_definition_result_id: 31, analyte: 'LACV', result_name: 'CT', unit: 'cycles', value_type: 'either', label: 'LACV CT' },
+      { assay_definition_result_id: 32, analyte: 'RNase P', result_name: 'CT', unit: 'cycles', value_type: 'numeric', label: 'RNase P CT' },
+    ],
   },
   {
     assay_definition_id: 4, assay_code: 'RNA-QUBIT', assay_name: 'RNA quantification', assay_type: 'Quantification', target: 'RNA',
     kit: null, instrument: null, typical_volume: null, typical_volume_unit: null, is_active: true, execution_count: 0, sample_count: 0, last_performed: null,
-    result_name: 'RNA concentration', result_unit: 'ng/uL', result_value_type: 'numeric',
+    result_fields: [{ assay_definition_result_id: 41, analyte: 'RNA', result_name: 'Concentration', unit: 'ng/uL', value_type: 'numeric', label: 'RNA Concentration' }],
   },
 ]
 
@@ -133,13 +136,12 @@ test('the page is about one Sample and shows how much of it is available', () =>
   expect(container.querySelector('a[href="/assays/new"]')?.textContent).toContain('Define a new assay')
 })
 
-test('choosing an assay names its one result and suggests its typical volume', async () => {
+test('choosing an assay lays out each of its result fields and suggests its typical volume', async () => {
   await choose('3')
 
   expect(field('#volume-used').value).toBe('5')
   expect(container.textContent).toContain('Typical for this assay: 5 uL')
-  expect(container.querySelector('label[for="assay-result"]')?.textContent).toContain('LACV CT')
-  expect(container.textContent).toContain('cycles')
+  for (const label of ['LACV CT value', 'LACV CT interpretation', 'RNase P CT value', 'RNase P CT interpretation']) expect(byLabel(label), label).toBeTruthy()
   expect(container.textContent).toContain('TaqPath')
 })
 
@@ -157,19 +159,27 @@ test('recording sends the workflow values and lands on the new assay', async () 
   expect(posted).toEqual(['/api/assay-definitions/4/executions'])
   expect(posts).toEqual([{
     assay_date: '2026-10-30T14:05', operator_name: 'Michael Clark', notes: 'Plate 3',
-    samples: [{ sample_id: 5, result: null, volume_used: '20', volume_unit: 'uL' }],
+    samples: [{ sample_id: 5, results: [{ assay_definition_result_id: 41, value: null, interpretation: null, qc_status: null }], volume_used: '20', volume_unit: 'uL' }],
   }])
   expect(container.textContent, 'the new execution, on its assay\'s page').toBe('/assays/4#execution-77')
 })
 
-test('the result is sent as typed with the sample; the backend decides number or text', async () => {
+test('results are sent as typed per field; blank fields are not entered', async () => {
   await fillAssay('3')
-  await fill('#assay-result', 'not detected')
+  await fill('[aria-label="LACV CT value"]', 'not detected')
+  await fill('[aria-label="LACV CT interpretation"]', 'negative')
 
   await act(async () => submitButton().click())
   await waitFor(() => posts.length === 1)
 
-  expect(posts[0].samples).toEqual([{ sample_id: 5, result: 'not detected', volume_used: '5', volume_unit: 'uL' }])
+  expect(posts[0].samples).toEqual([{
+    sample_id: 5,
+    results: [
+      { assay_definition_result_id: 31, value: 'not detected', interpretation: 'negative', qc_status: null },
+      { assay_definition_result_id: 32, value: null, interpretation: null, qc_status: null },
+    ],
+    volume_used: '5', volume_unit: 'uL',
+  }])
 })
 
 test('a person not in the suggestions is submitted as typed', async () => {

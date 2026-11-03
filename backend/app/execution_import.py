@@ -4,9 +4,13 @@ The workbook contract, also served as a template at
 GET /api/assay-definitions/{id}/executions/import-template:
 
 - Sheet "Samples" (required): a header row, then one row per Sample.
-  Columns: sample_code (required; a Sample code or a legacy Material code),
-  result (optional; a number such as 31.2 or text such as "not detected"),
-  volume_used and volume_unit (optional; deducted from the Sample when saved).
+  Columns: sample_code (required; a Sample code or a legacy Material code);
+  for each of the assay's result fields, a column named after it (for
+  example "LACV CT": a number such as 31.2 or text such as "not detected"),
+  optionally "<field> interpretation" and "<field> qc_status"; and
+  volume_used and volume_unit (deducted from the Sample when saved).
+  Every result column is optional and may be blank: a workbook of sample
+  codes alone creates an execution whose assay has not been done yet.
 - Sheet "Execution" (optional): one field per row, the field name in column A
   and its value in column B. Fields: execution_name (generated when blank),
   assay_date, operator_name, notes.
@@ -25,22 +29,23 @@ from sqlalchemy.orm import Session, selectinload
 
 from .models import AssayDefinition, LegacyMaterialRecord, Sample
 
-SAMPLE_COLUMNS = ["sample_code", "result", "volume_used", "volume_unit"]
+BASE_COLUMNS = ["sample_code", "volume_used", "volume_unit"]
 EXECUTION_FIELDS = ["execution_name", "assay_date", "operator_name", "notes"]
 MAX_ROWS = 2000
 
 
 def template_rows(definition: AssayDefinition) -> dict[str, list[list]]:
-    result_hint = f"{definition.result_name or 'result'}{f' ({definition.result_unit})' if definition.result_unit else ''}"
+    result_columns = [column for field in definition.result_fields for column in (field.label, f"{field.label} interpretation")]
+    result_hint = ", ".join(f"{field.label}{f' ({field.unit})' if field.unit else ''}" for field in definition.result_fields) or "none"
     return {
         # Header only: one row per Sample goes below it.
-        "Samples": [SAMPLE_COLUMNS],
+        "Samples": [["sample_code", *result_columns, "volume_used", "volume_unit"]],
         "Execution": [
             ["field", "value"],
             ["execution_name", ""],
             ["assay_date", datetime.now().replace(second=0, microsecond=0)],
             ["operator_name", ""],
-            ["notes", f"{definition.assay_name}; result column: {result_hint}, blank if not yet known"],
+            ["notes", f"{definition.assay_name}; result columns: {result_hint}; leave them blank if the assay has not been done yet"],
         ],
     }
 
@@ -64,7 +69,7 @@ def read_execution_workbook(content: bytes, file_name: str, definition: AssayDef
         if "samples" not in sheets:
             found = ", ".join(workbook.sheetnames) or "none"
             return _preview(source, None, [], [f"The workbook needs a sheet named \"Samples\" (sheets found: {found})"])
-        rows = _read_samples_sheet(sheets["samples"], problems)
+        rows = _read_samples_sheet(sheets["samples"], problems, definition)
         execution = _read_execution_sheet(sheets["execution"], problems) if "execution" in sheets else {}
     finally:
         workbook.close()
@@ -80,10 +85,12 @@ def read_execution_workbook(content: bytes, file_name: str, definition: AssayDef
                 row["problems"].append(f"{sample.sample_code} is already on row {seen[sample.sample_id]}; a sample appears once in an execution")
             else:
                 seen[sample.sample_id] = row["row_number"]
-        try:
-            parse_result(row["result"], definition)
-        except ValueError as error:
-            row["problems"].append(str(error))
+        fields = {field.assay_definition_result_id: field for field in definition.result_fields}
+        for result in row["results"]:
+            try:
+                parse_result(result["value"], fields[result["assay_definition_result_id"]])
+            except ValueError as error:
+                row["problems"].append(str(error))
         problems.extend(f"Samples sheet, row {row['row_number']}: {problem}" for problem in row["problems"])
     if not rows and not any(problem.startswith("Samples sheet") for problem in problems):
         problems.append("Samples sheet: no sample rows")
@@ -94,22 +101,42 @@ def _preview(source: dict, execution: dict | None, rows: list[dict], problems: l
     return {"source": source, "execution": execution, "rows": rows, "problems": problems, "can_import": not problems and bool(rows)}
 
 
-def _read_samples_sheet(sheet, problems: list[str]) -> list[dict]:
+def _result_columns(definition: AssayDefinition) -> dict[str, tuple[int, str]]:
+    """Header (normalized) -> (result field id, part) for each field's value, interpretation and QC columns."""
+    columns = {}
+    for field in definition.result_fields:
+        name = _header(field.label)
+        columns[name] = (field.assay_definition_result_id, "value")
+        columns[f"{name}_interpretation"] = (field.assay_definition_result_id, "interpretation")
+        columns[f"{name}_qc_status"] = (field.assay_definition_result_id, "qc_status")
+        columns[f"{name}_qc"] = (field.assay_definition_result_id, "qc_status")
+    return columns
+
+
+def _read_samples_sheet(sheet, problems: list[str], definition: AssayDefinition) -> list[dict]:
     table = _rows(sheet, problems, "Samples")
     if not table:
         return []
     header_number, header = table[0]
     columns = [_header(value) for value in header]
-    unknown = [str(value) for value, column in zip(header, columns) if column and column not in SAMPLE_COLUMNS]
+    result_columns = _result_columns(definition)
+    known = set(BASE_COLUMNS) | result_columns.keys()
+    unknown = [str(value) for value, column in zip(header, columns) if column and column not in known]
     if unknown:
-        problems.append(f"Samples sheet, row {header_number}: unknown column {', '.join(unknown)} (expected {', '.join(SAMPLE_COLUMNS)})")
+        expected = ", ".join(["sample_code", *(field.label for field in definition.result_fields), "volume_used", "volume_unit"])
+        problems.append(f"Samples sheet, row {header_number}: unknown column {', '.join(unknown)} (expected {expected}, and optional \"<field> interpretation\" columns)")
     if "sample_code" not in columns:
         problems.append(f"Samples sheet, row {header_number}: the header row needs a sample_code column")
         return []
     rows = []
     for row_number, values in table[1:]:
-        data = {column: value for column, value in zip(columns, values) if column in SAMPLE_COLUMNS}
-        row = {"row_number": row_number, "sample_code": _text(data.get("sample_code")), "sample": None, "result": _text(data.get("result")),
+        data = {column: value for column, value in zip(columns, values) if column in known}
+        results: dict[int, dict] = {}
+        for column, value in data.items():
+            if column in result_columns and _text(value) is not None:
+                field_id, part = result_columns[column]
+                results.setdefault(field_id, {"assay_definition_result_id": field_id, "value": None, "interpretation": None, "qc_status": None})[part] = _text(value)
+        row = {"row_number": row_number, "sample_code": _text(data.get("sample_code")), "sample": None, "results": list(results.values()),
                "volume_used": None, "volume_unit": _text(data.get("volume_unit")), "problems": []}
         if not row["sample_code"]:
             row["problems"].append("sample_code is required")

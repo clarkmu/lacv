@@ -48,8 +48,8 @@ export function AssaysPage() {
           { key: 'assay_type', label: 'Type', value: definition => definition.assay_type },
           { key: 'target', label: 'Target', value: definition => definition.target },
           {
-            key: 'result', label: 'Result', value: definition => definition.result_name,
-            render: definition => <span className="text-muted-foreground">{definition.result_name}{definition.result_unit && ` (${definition.result_unit})`}</span>,
+            key: 'results', label: 'Results', value: definition => definition.result_fields.map(field => field.label).join(', '),
+            render: definition => <span className="text-muted-foreground">{definition.result_fields.map(field => `${field.label}${field.unit ? ` (${field.unit})` : ''}`).join(', ')}</span>,
           },
           { key: 'kit', label: 'Kit', value: definition => definition.kit },
           { key: 'instrument', label: 'Instrument', value: definition => definition.instrument },

@@ -298,20 +298,20 @@ Sample page also shows process history (process_events, assay)
     Given a sample with no quantity, no unit, or a ledger that does not match its current quantity
     Then the Sample page shows what is recorded and why no percentage is shown
 
-45. **One execution holds many Samples, each with at most one result**
-    Given the assay "LACV qPCR (SYBR Green)"
-    When I start a new execution, keep or change its generated name, add three Samples by scanning their codes, and save
-    Then the assay's page shows one execution, identified by its ID, with three Sample rows under it
+45. **One execution holds many Samples, each with its own result set**
+    Given the duplex assay, which reports LACV CT and RNase P CT
+    When I start a new execution, keep or change its generated name, add ten Samples by scanning their codes, and save with every result blank
+    Then the assay's page shows one execution, identified by its ID, with ten Sample rows and blank LACV CT and RNase P CT cells
     And adding the same Sample twice is refused, and nothing is saved if any row is invalid
 
-46. **Results are entered later, in place**
-    Given an execution whose Samples have no results yet
-    When I type 31.2 for one Sample and "not detected" for another on the assay's page
-    Then they are saved as a number and as text
-    And the assay's average uses only the numeric results, saying how many it is based on
+46. **Results are entered later, field by field, in place**
+    Given that execution after the assay was run
+    When I type 31.2 and "positive" for Sample A's LACV CT, and "not detected" for Sample B's
+    Then they are saved as a number with its interpretation and as text, and Sample B's other fields stay blank
+    And each numeric field's average uses only its numeric values, saying how many it is based on
 
 47. **An execution can come from a workbook**
-    Given an .xlsx workbook with a Samples sheet of sample codes and optional results
+    Given an .xlsx workbook with a Samples sheet of sample codes and optional columns for each result field
     When I import it into a new execution of the assay
     Then I see every problem by sheet and row (unknown or repeated samples, invalid results), or the rows fill the new execution
     And nothing is saved until I save the execution
