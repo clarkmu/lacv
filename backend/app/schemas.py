@@ -583,14 +583,25 @@ class ExecutionImportSource(BaseModel):
     sha256: str
     sheets: list[str]
 
+class SampleCandidate(BaseModel):
+    """A Sample the row's code might mean, and why it was suggested."""
+    sample: SampleRef
+    reason: str
+
 class ExecutionImportRow(BaseModel):
-    """One Samples-sheet row, resolved to an existing Sample when its code matches one."""
+    """One Samples-sheet row: its exact Sample, or close candidates for the user to choose from, or neither."""
     row_number: int
     sample_code: str | None = None
+    # exact | close | none
+    match: str
     sample: SampleRef | None = None
+    candidates: list[SampleCandidate] = []
+    # Set when an earlier row already matched the same Sample exactly: a Sample appears once in an execution.
+    duplicate_of_row: int | None = None
     results: list[ExecutionResultInput] = []
     volume_used: Decimal | None = None
     volume_unit: str | None = None
+    # Problems with the row's values (a missing code, an invalid result or volume); matching is in match and duplicate_of_row.
     problems: list[str] = []
 
 class ExecutionImportDetails(BaseModel):
@@ -604,7 +615,7 @@ class ExecutionImportPreview(BaseModel):
     source: ExecutionImportSource
     execution: ExecutionImportDetails | None = None
     rows: list[ExecutionImportRow] = []
-    # Problems block saving; each names the sheet and row it is about.
+    # Problems with the file itself, which block the import; each names its sheet and row. Row problems are on the rows.
     problems: list[str] = []
     can_import: bool
 

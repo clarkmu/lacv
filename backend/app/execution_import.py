@@ -17,8 +17,21 @@ GET /api/assay-definitions/{id}/executions/import-template:
 
 Other sheets are ignored. Cells are read as stored values: a cell holding a
 formula is refused rather than calculated, and macros are never read.
+
+Each row's sample_code is matched to a Sample:
+- exact: it equals a Sample code, or failing that a legacy Material code;
+- close: no exact match, but candidates were found (the same code apart from
+  case, spaces or punctuation; a Sample whose external ID it equals; or a
+  similar code). None is chosen: the user confirms one;
+- none: no candidates; the user finds the Sample.
+Problems with the file itself block the import. Problems with a row (no
+match, a repeated Sample, an invalid value) are reported on the row for the
+user to fix before the rows join the new execution, where saving checks
+everything again.
 """
+import difflib
 import hashlib
+import re
 import zipfile
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -32,6 +45,9 @@ from .models import AssayDefinition, LegacyMaterialRecord, Sample
 BASE_COLUMNS = ["sample_code", "volume_used", "volume_unit"]
 EXECUTION_FIELDS = ["execution_name", "assay_date", "operator_name", "notes"]
 MAX_ROWS = 2000
+MAX_CANDIDATES = 5
+# How alike two codes must be (0-1, difflib ratio) to be offered as a close match.
+SIMILARITY_CUTOFF = 0.8
 
 
 def template_rows(definition: AssayDefinition) -> dict[str, list[list]]:
@@ -75,14 +91,14 @@ def read_execution_workbook(content: bytes, file_name: str, definition: AssayDef
         workbook.close()
 
     _resolve_samples(rows, db)
+    _suggest_close_matches([row for row in rows if row["sample"] is None and row["sample_code"]], db)
     seen: dict[int, int] = {}
     for row in rows:
         sample = row["sample"]
-        if row["sample_code"] and sample is None:
-            row["problems"].append(f"No sample or legacy material code matches {row['sample_code']}")
+        row["match"] = "exact" if sample is not None else ("close" if row["candidates"] else "none")
         if sample is not None:
             if sample.sample_id in seen:
-                row["problems"].append(f"{sample.sample_code} is already on row {seen[sample.sample_id]}; a sample appears once in an execution")
+                row["duplicate_of_row"] = seen[sample.sample_id]
             else:
                 seen[sample.sample_id] = row["row_number"]
         fields = {field.assay_definition_result_id: field for field in definition.result_fields}
@@ -91,7 +107,6 @@ def read_execution_workbook(content: bytes, file_name: str, definition: AssayDef
                 parse_result(result["value"], fields[result["assay_definition_result_id"]])
             except ValueError as error:
                 row["problems"].append(str(error))
-        problems.extend(f"Samples sheet, row {row['row_number']}: {problem}" for problem in row["problems"])
     if not rows and not any(problem.startswith("Samples sheet") for problem in problems):
         problems.append("Samples sheet: no sample rows")
     return _preview(source, execution, rows, problems)
@@ -136,7 +151,7 @@ def _read_samples_sheet(sheet, problems: list[str], definition: AssayDefinition)
             if column in result_columns and _text(value) is not None:
                 field_id, part = result_columns[column]
                 results.setdefault(field_id, {"assay_definition_result_id": field_id, "value": None, "interpretation": None, "qc_status": None})[part] = _text(value)
-        row = {"row_number": row_number, "sample_code": _text(data.get("sample_code")), "sample": None, "results": list(results.values()),
+        row = {"row_number": row_number, "sample_code": _text(data.get("sample_code")), "sample": None, "candidates": [], "duplicate_of_row": None, "results": list(results.values()),
                "volume_used": None, "volume_unit": _text(data.get("volume_unit")), "problems": []}
         if not row["sample_code"]:
             row["problems"].append("sample_code is required")
@@ -190,6 +205,39 @@ def _resolve_samples(rows: list[dict], db: Session) -> None:
             by_code[record.material_code] = record.sample
     for row in rows:
         row["sample"] = by_code.get(row["sample_code"])
+
+
+def _suggest_close_matches(rows: list[dict], db: Session) -> None:
+    """Candidates for codes with no exact match, best first; the user chooses, nothing is picked here."""
+    if not rows:
+        return
+    samples = db.scalars(select(Sample).options(selectinload(Sample.sample_type_ref), selectinload(Sample.legacy_material_records))).all()
+    by_key: dict[str, list[Sample]] = {}
+    by_external: dict[str, list[Sample]] = {}
+    for sample in samples:
+        for code in (sample.sample_code, *sample.legacy_codes):
+            by_key.setdefault(_key(code), []).append(sample)
+        if sample.external_sample_id:
+            by_external.setdefault(sample.external_sample_id.strip().lower(), []).append(sample)
+    keys = list(by_key)
+    for row in rows:
+        code = row["sample_code"]
+        candidates: dict[int, dict] = {}
+
+        def offer(found: list[Sample], reason: str) -> None:
+            for sample in found:
+                candidates.setdefault(sample.sample_id, {"sample": sample, "reason": reason})
+
+        offer(by_key.get(_key(code), []), "same code apart from case, spaces or punctuation")
+        offer(by_external.get(code.strip().lower(), []), "matches the external ID")
+        for similar in difflib.get_close_matches(_key(code), keys, n=MAX_CANDIDATES, cutoff=SIMILARITY_CUTOFF):
+            offer(by_key[similar], "similar code")
+        row["candidates"] = list(candidates.values())[:MAX_CANDIDATES]
+
+
+def _key(code: str) -> str:
+    """A code reduced to lower-case letters and digits, so "peds 2026_08-01" and "PEDS-2026-08-01" compare equal."""
+    return re.sub(r"[^a-z0-9]", "", code.lower())
 
 
 def _rows(sheet, problems: list[str], sheet_label: str) -> list[tuple[int, list]]:

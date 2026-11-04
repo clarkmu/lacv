@@ -117,7 +117,22 @@ def test_samples_resolve_by_legacy_material_code_too(legacy_database_url):
     assert shown["can_import"] and shown["rows"][0]["sample"]["sample_code"] == "SAMPLE-010-CHILD"
 
 
-def test_every_row_problem_is_reported_and_nothing_can_be_saved(client):
+def test_problems_with_the_file_block_the_import(client):
+    assay = definition(client)
+    create_root(client, "S-001")
+    content = workbook([("sample_code",), ("S-001",)], [("assay_date", "next Tuesday"), ("colour", "blue")])
+
+    shown = preview(client, assay["assay_definition_id"], content).json()
+
+    assert not shown["can_import"]
+    assert shown["problems"] == [
+        'Execution sheet, row 1: assay_date must be a date (e.g. 2026-11-03 14:05), not "next Tuesday"',
+        'Execution sheet, row 2: unknown field "colour" (expected one of execution_name, assay_date, operator_name, notes)',
+    ]
+    assert execution_count(client, assay["assay_definition_id"]) == 0
+
+
+def test_row_problems_are_reported_on_their_rows_for_fixing(client):
     assay = definition(client, value_type="numeric")
     create_root(client, "S-001")
     content = workbook([
@@ -126,23 +141,50 @@ def test_every_row_problem_is_reported_and_nothing_can_be_saved(client):
         ("NOPE-1", None, None),
         ("S-001", None, None),
         (None, 12, None),
-        ("S-002-MISSING", "positive", -1),
-    ], [("assay_date", "next Tuesday"), ("colour", "blue")])
+        ("XYZ-MISSING", "positive", -1),
+    ])
 
     shown = preview(client, assay["assay_definition_id"], content).json()
 
-    assert not shown["can_import"]
-    assert shown["problems"] == [
-        'Execution sheet, row 1: assay_date must be a date (e.g. 2026-11-03 14:05), not "next Tuesday"',
-        'Execution sheet, row 2: unknown field "colour" (expected one of execution_name, assay_date, operator_name, notes)',
-        "Samples sheet, row 3: No sample or legacy material code matches NOPE-1",
-        "Samples sheet, row 4: S-001 is already on row 2; a sample appears once in an execution",
-        "Samples sheet, row 5: sample_code is required",
-        'Samples sheet, row 6: volume_used must be a positive number, not "-1"',
-        "Samples sheet, row 6: No sample or legacy material code matches S-002-MISSING",
-        'Samples sheet, row 6: LACV CT must be a number, not "positive"',
-    ]
+    assert shown["can_import"] and shown["problems"] == [], "rows are fixed in the import dialog, not by re-uploading"
+    rows = {row["row_number"]: (row["match"], row["duplicate_of_row"], row["problems"]) for row in shown["rows"]}
+    assert rows == {
+        2: ("exact", None, []),
+        3: ("none", None, []),
+        4: ("exact", 2, []),
+        5: ("none", None, ["sample_code is required"]),
+        6: ("none", None, ['volume_used must be a positive number, not "-1"', 'LACV CT must be a number, not "positive"']),
+    }
     assert execution_count(client, assay["assay_definition_id"]) == 0
+
+
+def test_close_matches_are_suggested_but_never_chosen(client):
+    assay = definition(client)
+    create_root(client, "PEDS-2026-11-01", external_sample_id="112450681")
+    create_root(client, "PEDS-2026-11-02")
+    create_root(client, "PEDS-2026-11-12")
+    content = workbook([
+        ("sample_code",),
+        ("PEDS-2026-11-01",),
+        ("peds 2026_11-02",),
+        (112450681,),
+        ("PEDS-2026-11-2",),
+        ("ZZZ-NOTHING-LIKE-IT",),
+    ])
+
+    shown = preview(client, assay["assay_definition_id"], content).json()
+
+    def summary(row):
+        return (row["match"], row["sample"] and row["sample"]["sample_code"], [(item["sample"]["sample_code"], item["reason"]) for item in row["candidates"]])
+
+    rows = [summary(row) for row in shown["rows"]]
+    assert rows[0] == ("exact", "PEDS-2026-11-01", [])
+    assert rows[1][:2] == ("close", None) and rows[1][2][0] == ("PEDS-2026-11-02", "same code apart from case, spaces or punctuation")
+    assert rows[2][:2] == ("close", None) and rows[2][2][0] == ("PEDS-2026-11-01", "matches the external ID")
+    assert rows[3][:2] == ("close", None)
+    assert {code for code, reason in rows[3][2]} >= {"PEDS-2026-11-02", "PEDS-2026-11-12"} and {reason for _, reason in rows[3][2]} == {"similar code"}
+    assert rows[4] == ("none", None, [])
+    assert len(rows[3][2]) <= 5
 
 
 def test_malformed_and_unsupported_files_fail_clearly(client):

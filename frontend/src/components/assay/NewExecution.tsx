@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, FileSpreadsheet, Save, TriangleAlert, X } from 'lucide-react'
+import { Download, FileSpreadsheet, Save, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { api, ApiError } from '../../api'
 import { inputClass } from '../common'
 import { SuggestInput } from '../SuggestInput'
+import { ImportReview, type ReviewedRow } from './ImportReview'
 import { SampleFinder } from './SampleFinder'
 import type { AssayDefinitionDetail, AssayExecution, ExecutionImportPreview, SampleRef } from '../../types'
 
@@ -34,28 +35,33 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
   const [notes, setNotes] = useState('')
   const [rows, setRows] = useState<Row[]>([])
   const [notice, setNotice] = useState<string | null>(null)
+  // An uploaded workbook waiting in the review dialog.
+  const [review, setReview] = useState<ExecutionImportPreview | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const submitting = useRef(false)
   const unit = definition.typical_volume_unit ?? ''
 
   const imported = useMutation({
     mutationFn: (file: File) => api.previewExecutionImport(definition.assay_definition_id, file),
-    onSuccess: (preview: ExecutionImportPreview) => {
-      if (!preview.can_import) return
-      setRows(preview.rows.map(row => ({
-        sample: row.sample!,
-        results: Object.fromEntries(row.results.map(result => [result.assay_definition_result_id, { value: result.value ?? '', interpretation: result.interpretation ?? '', qc_status: result.qc_status }])),
-        volume: row.volume_used ? String(Number(row.volume_used)) : '',
-        unit: row.volume_unit ?? unit,
-      })))
-      const details = preview.execution
-      if (details?.execution_name) setName(details.execution_name)
-      if (details?.assay_date) { setDate(details.assay_date.slice(0, 10)); setTime(details.assay_date.slice(11, 16)) }
-      if (details?.operator_name) setPerformedBy(details.operator_name)
-      if (details?.notes) setNotes(details.notes)
-      setNotice(`${preview.rows.length} ${preview.rows.length === 1 ? 'sample' : 'samples'} loaded from ${preview.source.file_name}. Check them, then save.`)
-    },
+    onSuccess: (preview: ExecutionImportPreview) => setReview(preview),
   })
+
+  /** Rows confirmed in the review dialog join the table after any already there; the workbook's details fill the form. */
+  function addReviewed(reviewed: ReviewedRow[], preview: ExecutionImportPreview) {
+    setRows(current => [...current, ...reviewed.map(({ row, sample }) => ({
+      sample,
+      results: Object.fromEntries(row.results.map(result => [result.assay_definition_result_id, { value: result.value ?? '', interpretation: result.interpretation ?? '', qc_status: result.qc_status }])),
+      volume: row.volume_used ? String(Number(row.volume_used)) : '',
+      unit: row.volume_unit ?? unit,
+    }))])
+    const details = preview.execution
+    if (details?.execution_name) setName(details.execution_name)
+    if (details?.assay_date) { setDate(details.assay_date.slice(0, 10)); setTime(details.assay_date.slice(11, 16)) }
+    if (details?.operator_name) setPerformedBy(details.operator_name)
+    if (details?.notes) setNotes(details.notes)
+    setNotice(`${reviewed.length} ${reviewed.length === 1 ? 'sample' : 'samples'} added from ${preview.source.file_name}. Check them, then save.`)
+    setReview(null)
+  }
 
   const save = useMutation({
     mutationFn: () => api.createAssayExecution(definition.assay_definition_id, {
@@ -141,11 +147,15 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
         </label>
       </div>
 
-      {imported.data && !imported.data.can_import && (
-        <ul aria-label="Workbook problems" className="space-y-0.5 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive">
-          <li className="font-medium">{imported.data.source.file_name} was not loaded; fix these and choose it again:</li>
-          {imported.data.problems.map(problem => <li key={problem} className="flex items-start gap-1"><TriangleAlert aria-hidden="true" className="mt-0.5 size-3 shrink-0" />{problem}</li>)}
-        </ul>
+      {review && (
+        <ImportReview
+          preview={review}
+          definition={definition}
+          samples={samples.data ?? []}
+          alreadyAdded={rows.map(row => row.sample)}
+          onConfirm={reviewed => addReviewed(reviewed, review)}
+          onClose={() => setReview(null)}
+        />
       )}
       {imported.error && <p role="alert" className="border-b bg-destructive/5 px-3 py-2 text-xs text-destructive">{imported.error.message}</p>}
 

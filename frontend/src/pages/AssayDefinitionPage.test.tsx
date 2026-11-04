@@ -84,6 +84,19 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
   if (method === 'POST' && url.pathname === '/api/assay-definitions/1/executions') {
     return Promise.resolve(Response.json(execution(13, body.execution_name, []), { status: 201 }))
   }
+  if (method === 'POST' && url.pathname === '/api/assay-definitions/1/executions/import/preview') {
+    return Promise.resolve(Response.json({
+      source: { file_name: 'plate.xlsx', sha256: 'ab'.repeat(32), sheets: ['Samples', 'Execution'] },
+      execution: { execution_name: 'Plate from XLSX', assay_date: null, operator_name: null, notes: null },
+      problems: [], can_import: true,
+      rows: [
+        { row_number: 2, sample_code: 'S-1-RNA', match: 'exact', sample: ref(31, 'S-1-RNA'), candidates: [], duplicate_of_row: null, volume_used: null, volume_unit: null, problems: [],
+          results: [{ assay_definition_result_id: LACV, value: '29.9', interpretation: 'positive', qc_status: null }] },
+        { row_number: 3, sample_code: 's 2 rna', match: 'close', sample: null, duplicate_of_row: null, volume_used: null, volume_unit: null, problems: [], results: [],
+          candidates: [{ sample: ref(32, 'S-2-RNA'), reason: 'same code apart from case, spaces or punctuation' }] },
+      ],
+    }))
+  }
   if (url.pathname === '/api/assay-definitions/1') return Promise.resolve(Response.json(definition))
   if (url.pathname === '/api/samples') return Promise.resolve(Response.json([listed(31, 'S-1-RNA'), listed(32, 'S-2-RNA'), listed(33, 'S-3-RNA')]))
   if (url.pathname === '/api/assay-executions/performed-by') return Promise.resolve(Response.json(['J. Chen']))
@@ -267,4 +280,26 @@ test('creating from an .xlsx workbook is part of the new-execution workflow', as
   expect(byLabel<HTMLInputElement>('Execution workbook').type).toBe('file')
   expect(button('Import from XLSX')).toBeDefined()
   expect(container.querySelector('a[href="/api/assay-definitions/1/executions/import-template"]')?.textContent).toContain('Template')
+})
+
+test('an uploaded workbook opens a review dialog, and its confirmed rows join the new execution', async () => {
+  await act(async () => button('New execution')!.click())
+  const input = byLabel<HTMLInputElement>('Execution workbook')
+  Object.defineProperty(input, 'files', { configurable: true, value: [new File(['x'], 'plate.xlsx')] })
+  await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })))
+  await waitFor(() => document.querySelector('[role="dialog"]') !== null)
+
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+  expect([...dialog.querySelectorAll('section')].map(section => section.getAttribute('aria-label'))).toEqual(['Possible match', 'Matched'])
+  const add = () => [...dialog.querySelectorAll('button')].find(element => element.textContent?.startsWith('Add '))!
+  expect(add().disabled).toBe(true)
+  await act(async () => [...dialog.querySelectorAll('button')].find(element => element.textContent?.startsWith('Use S-2-RNA'))!.click())
+  await act(async () => add().click())
+
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  const rows = [...container.querySelectorAll('table[aria-label="Samples in the new execution"] tbody tr')].slice(0, -1).map(tr => tr.querySelectorAll('td')[1].textContent)
+  expect(rows).toEqual(['S-1-RNA', 'S-2-RNA'])
+  expect(byLabel('LACV CT for S-1-RNA').value).toBe('29.9')
+  expect(byLabel('LACV CT interpretation for S-1-RNA').value).toBe('positive')
+  expect(byLabel('Execution name').value).toBe('Plate from XLSX')
 })

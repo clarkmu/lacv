@@ -356,10 +356,18 @@ export type ExecutionSampleDraft = {
   volume_unit: string | null
 }
 
+/** A Sample a workbook row's code might mean, and why it was suggested. */
+export type SampleCandidate = { sample: SampleRef; reason: string }
+
+/** One Samples-sheet row: its exact Sample, or close candidates to choose from, or neither. */
 export type ExecutionImportRow = {
   row_number: number
   sample_code: string | null
+  match: 'exact' | 'close' | 'none'
   sample: SampleRef | null
+  candidates: SampleCandidate[]
+  /** An earlier row already matched the same Sample exactly. */
+  duplicate_of_row: number | null
   results: ExecutionResultInput[]
   volume_used: string | null
   volume_unit: string | null
