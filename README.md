@@ -178,6 +178,51 @@ The React application is a static browser application, so there is no frontend-s
 - Batch detail: the batch's root samples as an editable table (subject, Material, aliquot number, external ID, dates, quantity, storage, status), with values set on several selected rows at once, aliquot numbering in table order, and one all-or-nothing save.
 - Storage location list, creation, detail, and editing.
 
+## DGX Source-Live Development
+
+The DGX Spark has a separate source-live Docker development stack defined by
+`docker-compose.dev.yml`. It runs directly from the checkout at `~/code/lacv`
+and is independent of the normal production Compose stack.
+
+The development stack contains:
+
+| Piece | Development behavior |
+| --- | --- |
+| Gateway | HTTPS on `127.0.0.1:8443` |
+| Frontend | Vite dev server with source mounted from `frontend/` |
+| Backend | Uvicorn with `--reload`, with source mounted from `backend/` |
+| Database | Separate PostgreSQL 17 development volume, `lacv_dev_postgres` |
+
+The gateway uses `deploy/gateway/nginx.dev.conf`. It proxies `/api/` to the
+development backend and all other requests, including Vite HMR WebSockets, to
+the development frontend.
+
+The stack uses the external Docker network `lacv-dev`. Create it once on a new
+DGX development host with `docker network create lacv-dev`.
+
+The normal DGX development workflow is `lacv-dev-up`, followed by `lacv-agent`.
+The first command builds and starts the development Compose project. The second
+starts the separate coding-agent container with the LACV checkout mounted
+read/write and attaches it to `lacv-dev`. Run Claude Code or Codex inside that
+container.
+
+The coding-agent container intentionally has no Docker socket and no GPU access.
+It can communicate with development services over `lacv-dev` but cannot control
+Docker itself.
+
+Open the application through an SSH local forward to `127.0.0.1:8443`. The
+development gateway certificate is self-signed.
+
+When finished, exit the coding agent and run `lacv-dev-down`. Stopping the
+development stack does not remove `lacv_dev_postgres`, so development database
+state persists between sessions. Deleting that volume is a separate destructive
+operation.
+
+This source-live stack is development infrastructure only. It must not be used
+as the production deployment path, and its PostgreSQL volume is separate from
+the production database. Production continues to use the deployment procedure
+below.
+
 ## Deploying On The DGX Spark
 
 The DGX runs the stack from the checkout at `~/code/lacv`, on the production branch `main` (origin's default branch). Deploy from that directory:
