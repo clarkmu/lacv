@@ -70,3 +70,17 @@
   :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
   :where(input, textarea, select):focus-visible { outline-offset: 0; }
 }
+
+/* Sample map (components/map/SampleMap.tsx): Leaflet draws these from plain HTML, so they are styled here with the theme tokens. */
+.lacv-site {
+  display: grid; place-items: center; width: 100%; height: 100%; box-sizing: border-box;
+  border-radius: 9999px; border: 2px solid var(--card); background: var(--primary); color: var(--primary-foreground);
+  box-shadow: 0 0 0 1px oklch(0 0 0 / 0.35); font: 600 11px/1 var(--font-mono, ui-monospace, monospace);
+}
+.lacv-site-multiple { background: var(--chrome); }
+.leaflet-marker-icon:focus-visible .lacv-site { outline: 2px solid var(--ring); outline-offset: 2px; }
+.lacv-site-popup { font: 13px/1.4 var(--font-sans, sans-serif); }
+.lacv-site-popup-heading { margin: 0 0 4px; font-weight: 600; }
+.lacv-site-popup ul { margin: 0; padding: 0; list-style: none; max-height: 14rem; overflow-y: auto; }
+.lacv-site-popup li { padding: 1px 0; color: var(--muted-foreground); font-size: 12px; }
+.lacv-site-popup a { color: var(--primary); font: 500 12px var(--font-mono, ui-monospace, monospace); }

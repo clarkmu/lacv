@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { api, ApiError } from '../api'
-import { inputClass, SampleLink, SampleTypeLabel, StatusBadge } from '../components/common'
+import { inputClass, SampleLink, SampleTypeLabel, StatusBadge, NotLoaded } from '../components/common'
 import { Field, FieldError, Section } from '../components/form'
 import { SuggestInput } from '../components/SuggestInput'
 import { formatQuantity } from '../format'
@@ -22,7 +22,7 @@ export function NewAssayPage() {
   const sampleQuery = useQuery({ queryKey: ['sample', id], queryFn: () => api.getSample(id) })
 
   if (sampleQuery.isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading sample…</p>
-  if (!sampleQuery.data) return <p className="py-6 text-sm text-muted-foreground">Sample not found.</p>
+  if (!sampleQuery.data) return <NotLoaded error={sampleQuery.error} what="Sample" />
   return <RecordAssayForm sample={sampleQuery.data} />
 }
 

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { Panel, SampleLink } from '../common'
+import { CompactAvailability } from './SampleAvailability'
 import type { SampleLineage as Lineage, SampleLineageNode, SampleRef } from '../../types'
 
 // Tree connectors: each descendant draws an elbow to its parent's rail, and keeps the rail going for later siblings.
@@ -18,6 +19,7 @@ export function SampleLineage({ sample, lineage }: { sample: SampleRef; lineage:
   const descendantCount = lineage ? countNodes(lineage.descendants) : 0
   return (
     <Panel
+      primary
       title="Lineage"
       action={
         <div className="flex items-center gap-2">
@@ -75,6 +77,8 @@ function Descendant({ node }: { node: SampleLineageNode }) {
         <span className="text-xs text-muted-foreground">{node.sample_type || 'No type'}</span>
         <span className="text-xs text-muted-foreground">{node.status}</span>
         {node.generated_by && <span className="text-xs text-muted-foreground/80">via {node.generated_by.type} <span className="font-mono">{node.generated_by.code}</span></span>}
+        {/* Aligned at the right so the bars of siblings line up. */}
+        {node.availability && <span className="ml-auto pl-3" data-testid="lineage-availability"><CompactAvailability availability={node.availability} sampleCode={node.sample_code} /></span>}
       </div>
       {node.children.length > 0 && <ul>{node.children.map(child => <Descendant key={child.sample_id} node={child} />)}</ul>}
     </li>

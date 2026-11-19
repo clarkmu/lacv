@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { SamplesPage } from './pages/SamplesPage'
+import { SampleMapPage } from './pages/SampleMapPage'
 import { SamplePage } from './pages/SamplePage'
 import { NewSamplePage } from './pages/NewSamplePage'
 import { NewChildSamplePage } from './pages/NewChildSamplePage'
@@ -23,6 +24,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/samples" element={<SamplesPage />} />
         <Route path="/samples/new" element={<NewSamplePage />} />
+        <Route path="/samples/map" element={<SampleMapPage />} />
         <Route path="/sample/:id" element={<SamplePage />} />
         <Route path="/sample/:id/children/new" element={<NewChildSamplePage />} />
         <Route path="/sample/:id/aliquots/new" element={<NewAliquotPage />} />

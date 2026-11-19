@@ -483,3 +483,99 @@ BEGIN
 	INSERT INTO sample_quantity_events (sample_id, event_type, quantity_change, quantity_unit, quantity_before, quantity_after, operator_name, notes)
 	VALUES (dna_id, 'consumed', -120, 'ng', 500, 380, 'A. Rivera', 'Library input');
 END $$;
+
+-- ----- Collection locations for the sample map ---------------------------------------------------
+-- ILLUSTRATIVE ONLY: plausible points across western North Carolina for demonstrating the map. They are not real
+-- trap sites, clinics or residences, and are not derived from any real data.
+--
+-- Deterministic: every coordinate and every located/not-located choice comes from an MD5 hash of a code, so each
+-- reseed produces exactly the same dataset, independent of row order. About three quarters of all Samples get
+-- both coordinates; the rest get neither (never just one).
+--   * Field mosquito pools: each trap (Site A-F) is a fixed field point in a different county. Pools from one trap
+--     in one week share that point exactly; the trap's placement in another week is a few dozen metres away.
+--   * Clinic and hospital Samples: located per subject, so all of a subject's tubes share one point: a randomised
+--     spot within a few kilometres of one of the region's towns (weighted towards the larger ones). Roughly a third
+--     of subjects have no recorded location.
+--   * Derived Samples (aliquots, extracts, cDNA) carry the point of the collection they came from: seed data only;
+--     the application itself never copies values to a child.
+--   * The unbatched availability examples (DEMO-*) have no collection context and no location.
+
+-- A number in [0, 1) from a text key; the same key always gives the same number.
+CREATE FUNCTION pg_temp.unit(p_key TEXT) RETURNS DOUBLE PRECISION LANGUAGE sql IMMUTABLE AS $$
+	SELECT ('x' || substr(md5(p_key), 1, 8))::bit(32)::bigint / 4294967296.0
+$$;
+
+-- Share of clinic/hospital subjects with a location; tuned so about 75% of all Samples are located.
+CREATE FUNCTION pg_temp.subject_located(p_subject TEXT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS $$
+	SELECT pg_temp.unit('located:' || p_subject) < 0.68
+$$;
+
+CREATE TEMP TABLE seed_areas (area TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION, radius_km DOUBLE PRECISION, weight INTEGER);
+INSERT INTO seed_areas VALUES
+	('Asheville / Buncombe',    35.5951, -82.5515, 9, 18),
+	('Weaverville',             35.6973, -82.5607, 5,  5),
+	('Black Mountain',          35.6179, -82.3212, 5,  4),
+	('Hendersonville',          35.3187, -82.4610, 8,  9),
+	('Brevard / Transylvania',  35.2334, -82.7343, 8,  6),
+	('Waynesville / Haywood',   35.4887, -82.9887, 7,  7),
+	('Canton',                  35.5329, -82.8374, 5,  4),
+	('Marshall / Madison',      35.7973, -82.6840, 7,  3),
+	('Sylva / Jackson',         35.3734, -83.2260, 7,  6),
+	('Franklin / Macon',        35.1823, -83.3815, 7,  6),
+	('Highlands',               35.0526, -83.1968, 4,  2),
+	('Bryson City / Swain',     35.4312, -83.4496, 6,  4),
+	('Cherokee',                35.4743, -83.3149, 5,  4),
+	('Robbinsville / Graham',   35.3226, -83.8074, 6,  2),
+	('Murphy / Cherokee Co.',   35.0876, -84.0352, 7,  3),
+	('Burnsville / Yancey',     35.9168, -82.3010, 6,  3),
+	('Spruce Pine / Mitchell',  35.9154, -82.0646, 6,  3),
+	('Marion / McDowell',       35.6840, -82.0093, 7,  4),
+	('Boone / Watauga',         36.2168, -81.6746, 7,  5),
+	('Banner Elk / Avery',      36.1632, -81.8715, 5,  2);
+
+CREATE TEMP TABLE seed_traps (source_description TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION);
+INSERT INTO seed_traps VALUES
+	('Site A, gravid trap', 35.6043, -82.4197),  -- Swannanoa valley, Buncombe
+	('Site B, gravid trap', 35.3882, -82.5663),  -- Mills River, Henderson
+	('Site C, gravid trap', 35.5358, -82.9021),  -- Clyde, Haywood
+	('Site D, gravid trap', 35.3452, -83.2047),  -- Tuckasegee River, Jackson
+	('Site E, gravid trap', 35.1641, -83.4352),  -- Cartoogechaye, Macon
+	('Site F, gravid trap', 35.4598, -83.4303);  -- Deep Creek, Swain
+
+-- A point within radius_km of a centre, uniform over the disc, from two hashes of the key.
+CREATE FUNCTION pg_temp.scatter(p_key TEXT, p_latitude DOUBLE PRECISION, p_longitude DOUBLE PRECISION, p_radius_km DOUBLE PRECISION,
+	OUT latitude DOUBLE PRECISION, OUT longitude DOUBLE PRECISION) LANGUAGE sql IMMUTABLE AS $$
+	SELECT p_latitude + distance * cos(angle) / 111.0, p_longitude + distance * sin(angle) / (111.0 * cos(radians(p_latitude)))
+	FROM (SELECT p_radius_km * sqrt(pg_temp.unit('distance:' || p_key)) AS distance, 2 * pi() * pg_temp.unit('angle:' || p_key) AS angle) AS polar
+$$;
+
+-- Field pools: their trap's point, moved a few dozen metres for each week's placement.
+UPDATE samples s
+SET (latitude, longitude) = (SELECT spot.latitude, spot.longitude FROM pg_temp.scatter(t.source_description || '@' || b.batch_code, t.latitude, t.longitude, 0.12) AS spot)
+FROM seed_traps t, batches b
+WHERE s.parent_sample_id IS NULL AND s.source_description = t.source_description AND b.batch_id = s.batch_id;
+
+-- Clinic and hospital subjects: a weighted choice of area, then a point within it.
+UPDATE samples s
+SET (latitude, longitude) = (SELECT spot.latitude, spot.longitude FROM pg_temp.scatter('home:' || s.subject_code, a.latitude, a.longitude, a.radius_km) AS spot)
+FROM (
+	SELECT subject_code, (
+		SELECT area FROM (
+			SELECT area, sum(weight) OVER (ORDER BY area) AS reach, sum(weight) OVER () AS total FROM seed_areas
+		) AS cumulative
+		WHERE reach > pg_temp.unit('area:' || subject_code) * total ORDER BY reach LIMIT 1
+	) AS area
+	FROM samples WHERE parent_sample_id IS NULL AND subject_code IS NOT NULL GROUP BY subject_code
+) AS chosen
+JOIN seed_areas a ON a.area = chosen.area
+WHERE s.parent_sample_id IS NULL AND s.subject_code = chosen.subject_code AND s.source_type IN ('Peds clinic', 'Hospital')
+	AND pg_temp.subject_located(s.subject_code);
+
+-- Derived Samples: the point of the root collection they came from (or none).
+WITH RECURSIVE family AS (
+	SELECT sample_id, latitude, longitude FROM samples WHERE parent_sample_id IS NULL
+	UNION ALL
+	SELECT child.sample_id, family.latitude, family.longitude FROM samples child JOIN family ON child.parent_sample_id = family.sample_id
+)
+UPDATE samples s SET latitude = family.latitude, longitude = family.longitude
+FROM family WHERE s.sample_id = family.sample_id AND s.parent_sample_id IS NOT NULL;

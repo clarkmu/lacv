@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { Label } from '@/components/ui/label'
+import { sectionTitleClass } from './common'
 
 // Pieces of LACV's laboratory forms: a titled section with a short explanation, and labelled fields with their errors.
 
@@ -8,7 +9,7 @@ export function Section({ title, description, children }: { title: string; descr
   return (
     <fieldset className="grid gap-x-6 gap-y-2 border-b px-4 py-4 md:grid-cols-[13rem_minmax(0,1fr)]">
       <div>
-        <legend className="text-[13px] font-semibold tracking-tight">{title}</legend>
+        <legend className={sectionTitleClass}>{title}</legend>
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
       </div>
       <div className="min-w-0">{children}</div>

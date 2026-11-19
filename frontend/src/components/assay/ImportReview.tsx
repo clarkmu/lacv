@@ -70,7 +70,7 @@ export function ImportReview({ preview, definition, samples, alreadyAdded, onCon
               return (
                 <section key={group.match} aria-label={group.title} className="rounded-md border">
                   <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-muted/50 px-3 py-1.5">
-                    <h3 className={cn('flex items-center gap-1.5 text-[13px] font-semibold', group.tone)}><Icon aria-hidden="true" className="size-3.5" />{group.title} <span className="font-normal text-muted-foreground tabular-nums">· {rows.length}</span></h3>
+                    <h3 className={cn('flex items-center gap-1.5 text-sm font-semibold', group.tone)}><Icon aria-hidden="true" className="size-3.5" />{group.title} <span className="font-normal text-muted-foreground tabular-nums">· {rows.length}</span></h3>
                     <span className="text-xs text-muted-foreground">{group.hint}</span>
                     {group.match === 'close' && suggestionsLeft.length > 0 && (
                       <Button type="button" variant="outline" size="sm" className="ml-auto h-7" onClick={() => suggestionsLeft.forEach(row => choose(row.row_number, { sample: row.candidates[0].sample }))}>

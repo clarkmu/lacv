@@ -78,6 +78,9 @@ class Sample(Base):
     is_disposed: Mapped[bool] = mapped_column(Boolean, default=False)
     expiration_date: Mapped[datetime | None] = mapped_column(DateTime)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Where the Sample was collected, in decimal degrees (WGS 84). Optional; the sample map plots Samples with both.
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
 

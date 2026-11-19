@@ -15,6 +15,8 @@ export type SampleFormPayload = {
   storage_location_id: number | null
   status: string
   notes: string | null
+  latitude: number | null
+  longitude: number | null
   batch_id?: number | null
 }
 
@@ -58,6 +60,8 @@ export function SampleForm({ title, submitLabel, defaultStatus, isPending, error
       storage_location_id: number('storage_location_id'),
       status: values.status || defaultStatus,
       notes: text('notes'),
+      latitude: number('latitude'),
+      longitude: number('longitude'),
       ...(allowBatch ? { batch_id: number('batch_id') } : {}),
     })
   }
@@ -96,6 +100,10 @@ export function SampleForm({ title, submitLabel, defaultStatus, isPending, error
         ) : <div />}
         <label className="text-sm font-medium">Concentration<input type="number" step="any" value={values.concentration ?? ''} onChange={set('concentration')} className={inputClass} /></label>
         <label className="text-sm font-medium">Concentration unit<input value={values.concentration_unit ?? ''} onChange={set('concentration_unit')} className={inputClass} /></label>
+        <div />
+        <label className="text-sm font-medium">Latitude<input type="number" step="any" min="-90" max="90" placeholder="e.g. 35.5951" value={values.latitude ?? ''} onChange={set('latitude')} className={inputClass} /></label>
+        <label className="text-sm font-medium">Longitude<input type="number" step="any" min="-180" max="180" placeholder="e.g. -82.5515" value={values.longitude ?? ''} onChange={set('longitude')} className={inputClass} /></label>
+        <p className="self-end pb-2 text-xs text-slate-500">Where it was collected, in decimal degrees. Optional; shown on the sample map.</p>
         <label className="text-sm font-medium sm:col-span-3">Notes<textarea value={values.notes ?? ''} onChange={set('notes')} className={`${inputClass} min-h-16`} /></label>
       </div>
       {extraFields}

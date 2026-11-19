@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { api, ApiError } from '../api'
-import { errorClass, inputClass } from '../components/common'
+import { errorClass, inputClass, NotLoaded } from '../components/common'
 import type { BatchDetail, BatchSampleRow, SampleType, StorageLocation } from '../types'
 
 const STATUSES = ['expected', 'received', 'available', 'consumed', 'disposed']
@@ -52,7 +52,7 @@ export function BatchPage() {
   const types = useQuery({ queryKey: ['sample-types'], queryFn: api.listSampleTypes })
   const locations = useQuery({ queryKey: ['storage-locations'], queryFn: api.listStorageLocations })
   if (query.isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading batch…</p>
-  if (!query.data) return <p className="py-6 text-sm text-muted-foreground">Batch not found.</p>
+  if (!query.data) return <NotLoaded error={query.error} what="Batch" />
   return <BatchEditor batch={query.data} types={types.data ?? []} locations={locations.data ?? []} />
 }
 

@@ -16,15 +16,15 @@ function sample(sample_id: number, sample_code: string, fields: Partial<SampleLi
   return {
     sample_id, sample_code, sample_type: null, status: 'available', sample_type_id: null, parent_sample_id: null, batch_id: null,
     external_sample_id: null, subject_code: null, aliquot_number: null, label: null, received_date: null, current_quantity: null, quantity_unit: null, storage_location_id: null,
-    legacy_codes: [], ...fields,
+    legacy_codes: [], batch: null, ...fields,
   }
 }
 
 // The fake API applies root_only the way the backend does, so the page must ask for it rather than hide rows itself.
 const SAMPLES = [
-  sample(1, 'MOSQ-001', { label: 'Field pool', current_quantity: '200.000000', quantity_unit: 'uL', legacy_codes: ['MAT-0001'] }),
+  sample(1, 'MOSQ-001', { label: 'Field pool', current_quantity: '200.000000', quantity_unit: 'uL', legacy_codes: ['MAT-0001'], batch_id: 7, batch: { batch_id: 7, batch_code: 'MOSQ-2026-W34', batch_name: 'Mosquito surveillance, week 34' } }),
   sample(2, 'MOSQ-001-RNA', { parent_sample_id: 1, label: 'Field pool RNA', legacy_codes: ['MAT-0002'] }),
-  sample(3, 'TICK-001', { label: 'Tick tube' }),
+  sample(3, 'TICK-001', { label: 'Tick tube', batch_id: 3, batch: { batch_id: 3, batch_code: 'TICK-2026-01', batch_name: 'Tick drag, January 2026' } }),
 ]
 const requestedPaths: string[] = []
 
@@ -84,8 +84,12 @@ async function waitFor(condition: () => boolean) {
   throw new Error(`Timed out waiting. Page text: ${container.textContent}`)
 }
 
+// The Sample column, found by its header (Batch is the first column).
 function listedCodes() {
-  return [...container.querySelectorAll('tbody tr')].map(row => row.querySelector('td')?.textContent ?? '').filter(code => code && !code.startsWith('No samples'))
+  const column = [...container.querySelectorAll('thead th')].findIndex(cell => cell.textContent === 'Sample')
+  return [...container.querySelectorAll('tbody tr')]
+    .filter(row => row.querySelectorAll('td').length > 1)
+    .map(row => row.querySelectorAll('td')[column]?.textContent ?? '')
 }
 
 // The control is found through its visible label, as a user (or screen reader) would.
@@ -121,7 +125,8 @@ test('turning the filter off lists root and derived samples', async () => {
   await setBaseSamplesOnly(false)
   await waitFor(() => listedCodes().length === 3)
 
-  expect(listedCodes()).toEqual(['MOSQ-001', 'MOSQ-001-RNA', 'TICK-001'])
+  // Batch-friendly default order: newest batch first, then Samples with no batch (derived Samples belong to none).
+  expect(listedCodes()).toEqual(['MOSQ-001', 'TICK-001', 'MOSQ-001-RNA'])
   expect(requestedPaths).toContain('/api/samples')
   const derivedRow = [...container.querySelectorAll('tbody tr')].find(row => row.textContent?.includes('MOSQ-001-RNA'))!
   expect(derivedRow.querySelector('a[href="/sample/1"]')?.textContent).toBe('MOSQ-001')
@@ -154,14 +159,43 @@ test('scanning a derived sample code still opens it while the filter is on', asy
   expect(container.textContent).toBe('Opened sample 2')
 })
 
-test('existing list features still work: links, quantity, legacy codes, sorting, create action', async () => {
+test('existing list features still work: links, quantity, sorting, create action', async () => {
   expect(container.querySelector('a[href="/sample/1"]')?.textContent).toBe('MOSQ-001')
   expect(container.textContent).toContain('200 uL')
-  expect(container.textContent).toContain('MAT-0001')
   expect(container.querySelector('a[href="/samples/new"]')?.textContent).toBe('Create root sample')
+  expect(container.querySelector('a[href="/samples/map"]')?.textContent).toBe('Map')
 
   const sampleHeader = [...container.querySelectorAll('th button')].find(button => button.textContent?.startsWith('Sample'))!
   await act(async () => (sampleHeader as HTMLButtonElement).click())
   await act(async () => (sampleHeader as HTMLButtonElement).click())
   expect(listedCodes()).toEqual(['TICK-001', 'MOSQ-001'])
+})
+
+const headers = () => [...container.querySelectorAll('thead th')].map(cell => cell.textContent)
+
+test('the Parent column shows only when derived samples are listed, and follows the filter without a reload', async () => {
+  expect(headers()).not.toContain('Parent')
+
+  await setBaseSamplesOnly(false)
+  await waitFor(() => listedCodes().length === 3)
+  expect(headers()).toContain('Parent')
+
+  await setBaseSamplesOnly(true)
+  await waitFor(() => listedCodes().length === 2)
+  expect(headers()).not.toContain('Parent')
+  expect(requestedPaths.filter(path => path.startsWith('/api/samples')).length).toBeGreaterThanOrEqual(2)
+})
+
+test('legacy codes are not a column, with or without the filter, but still find their sample', async () => {
+  for (const baseOnly of [true, false]) {
+    await setBaseSamplesOnly(baseOnly)
+    await waitFor(() => listedCodes().length === (baseOnly ? 2 : 3))
+    expect(headers().some(header => header?.toLowerCase().includes('legacy'))).toBe(false)
+    expect(container.querySelector('tbody')!.textContent).not.toContain('MAT-0001')
+  }
+  const columnMenu = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Columns'))!
+  expect(columnMenu).toBeDefined()
+
+  await typeInto(searchField(), 'MAT-0001')
+  expect(listedCodes()).toEqual(['MOSQ-001'])
 })

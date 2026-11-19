@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { SampleForm } from '../components/SampleForm'
 import { formatQuantity } from '../format'
-import { SampleLink } from '../components/common'
+import { SampleLink, NotLoaded } from '../components/common'
 
 export function NewChildSamplePage() {
   const { id = '' } = useParams()
@@ -19,7 +19,7 @@ export function NewChildSamplePage() {
   })
 
   if (parent.isLoading) return <p>Loading parent sample…</p>
-  if (!parent.data) return <p>Parent sample not found.</p>
+  if (!parent.data) return <NotLoaded error={parent.error} what="Parent sample" />
   const parentAvailable = parent.data.availability.available_quantity
 
   return (
@@ -31,7 +31,7 @@ export function NewChildSamplePage() {
       intro={<p className="mb-1 text-sm text-slate-500">Parent <SampleLink sample={parent.data} />{parentAvailable !== null && <> · {formatQuantity(parentAvailable, parent.data.quantity_unit)} available</>}</p>}
       extraFields={
         <fieldset className="mt-4 grid gap-3 rounded border border-slate-200 bg-slate-50 p-3 sm:grid-cols-3">
-          <legend className="px-1 text-sm font-medium">Taken from parent</legend>
+          <legend className="px-1 text-sm font-semibold">Taken from parent</legend>
           <label className="text-sm font-medium">Amount<input type="number" step="any" min="0" value={takenAmount} onChange={event => setTakenAmount(event.target.value)} className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm" /></label>
           <label className="text-sm font-medium">Unit<input value={takenUnit} onChange={event => setTakenUnit(event.target.value)} placeholder={parent.data.quantity_unit ?? ''} className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm" /></label>
           <p className="self-end text-xs text-slate-500 sm:pb-1.5">Removed from the parent's available quantity. Leave blank if nothing was taken or it is unknown.</p>

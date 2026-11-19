@@ -1,20 +1,20 @@
 """Assays: reusable procedures and their result fields. Each execution holds one or more Samples, each with one result set."""
 import re
 from decimal import Decimal
-from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
-from ..execution_import import read_execution_workbook, template_rows
+from ..execution_import import read_execution_workbook, template_docs, template_file_name, template_sheets
 from ..models import AssayDefinition, AssayDefinitionResult, AssayExecution, AssayExecutionSample
 from ..schemas import (
     AssayDefinitionCreate, AssayDefinitionDetail, AssayDefinitionListItem, AssayDefinitionUpdate, AssayExecutionCreate, AssayExecutionDetail,
-    ExecutionImportPreview,
+    ExecutionImportPreview, TemplateDoc,
 )
+from ..spreadsheet import XLSX_MEDIA_TYPE, template_workbook
 from .assay_executions import create_execution, field_error, get_assay_execution, load_executions, next_execution_name
 
 router = APIRouter(prefix="/assay-definitions", tags=["assays"])
@@ -96,28 +96,19 @@ def create_assay_execution(definition_id: int, payload: AssayExecutionCreate, db
 
 @router.get("/{definition_id}/executions/import-template")
 def download_execution_template(definition_id: int, db: Session = Depends(get_db)):
-    """A workbook in the shape the execution import reads: a Samples sheet and an Execution sheet."""
-    from openpyxl import Workbook
-    from openpyxl.utils import get_column_letter
-
+    """A workbook in the shape the execution import reads: a Samples sheet (required columns marked *) and an Execution sheet."""
     definition = _definition_or_404(definition_id, db)
-    workbook = Workbook()
-    workbook.remove(workbook.active)
-    for title, rows in template_rows(definition).items():
-        sheet = workbook.create_sheet(title)
-        for row in rows:
-            sheet.append(row)
-        for index in range(1, sheet.max_column + 1):
-            sheet.column_dimensions[get_column_letter(index)].width = 24
-    output = BytesIO()
-    workbook.save(output)
-    output.seek(0)
-    file_name = re.sub(r"[^A-Za-z0-9-]+", "-", definition.assay_code).lower()
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}-execution.xlsx"'},
+    return Response(
+        template_workbook(template_sheets(definition)),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{template_file_name(definition)}"'},
     )
+
+
+@router.get("/{definition_id}/executions/import-template/columns", response_model=TemplateDoc)
+def describe_execution_template(definition_id: int, db: Session = Depends(get_db)):
+    """What each column of this assay's execution template means, from the same column list the importer reads."""
+    return template_docs(_definition_or_404(definition_id, db))
 
 
 @router.post("/{definition_id}/executions/import/preview", response_model=ExecutionImportPreview)
@@ -125,10 +116,10 @@ async def preview_execution_import(definition_id: int, file: UploadFile = File(.
     """Read and check a workbook against this assay without saving anything. The rows are then saved as a new execution."""
     definition = _definition_or_404(definition_id, db)
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(400, "Upload an .xlsx workbook (macro-enabled .xlsm and older .xls files are not accepted)")
+        raise HTTPException(400, "Choose an Excel workbook ending in .xlsx (start from the template). Macro-enabled .xlsm, older .xls and .csv files are not accepted; open them in Excel and save as \"Excel Workbook (.xlsx)\".")
     content = await file.read(MAX_WORKBOOK_BYTES + 1)
     if len(content) > MAX_WORKBOOK_BYTES:
-        raise HTTPException(413, "The workbook is larger than 2 MB")
+        raise HTTPException(413, "The workbook is larger than 2 MB. Remove other sheets or images, or split the samples into several files.")
     return read_execution_workbook(content, file.filename, definition, db)
 
 

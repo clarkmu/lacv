@@ -18,6 +18,8 @@ export type SampleListItem = SampleRef & {
   quantity_unit: string | null
   storage_location_id: number | null
   legacy_codes: string[]
+  /** The shipping batch this Sample arrived in; derived Samples have none. */
+  batch: BatchBrief | null
 }
 
 export type BatchBrief = {
@@ -49,22 +51,36 @@ export type BatchSampleRow = {
 
 export type BatchDetail = BatchBrief & { description: string | null; is_active: boolean; samples: BatchSampleRow[] }
 
+/** A root Sample of a batch workbook, as text; the backend checks and converts every value. */
 export type BatchSampleImportRow = {
-  sample_code: string
+  sample_code: string | null
   subject_code: string | null
   external_sample_id: string | null
-  aliquot_number: number | null
+  aliquot_number: string | null
   sample_type: string | null
   source_type: string | null
   source_description: string | null
   collection_date: string | null
   received_date: string | null
-  status: string
+  status: string | null
+  latitude: string | null
+  longitude: string | null
   notes: string | null
 }
 
+/** What is wrong with one cell, and what to enter instead. */
+export type ImportCellProblem = { column: string; value: string | null; message: string }
+
+export type BatchSampleImportPreviewRow = BatchSampleImportRow & { row_number: number; problems: ImportCellProblem[] }
+
 export type BatchSampleImportPreview = {
-  samples: BatchSampleImportRow[]
+  file_name: string
+  samples: BatchSampleImportPreviewRow[]
+  /** Problems with the file itself; they block the import. */
+  problems: string[]
+  /** Worth knowing, but not blocking (e.g. columns that are ignored). */
+  warnings: string[]
+  can_import: boolean
 }
 
 export type SampleType = {
@@ -201,6 +217,9 @@ export type SampleDetail = SampleListItem & {
   is_disposed: boolean
   expiration_date: string | null
   notes: string | null
+  /** Decimal degrees (WGS 84); the sample map plots Samples with both. */
+  latitude: string | null
+  longitude: string | null
   batch: BatchBrief | null
   parent: SampleRef | null
   children: SampleRef[]
@@ -217,8 +236,23 @@ export type SampleDetail = SampleListItem & {
 
 export type SampleLineageNode = SampleRef & {
   generated_by: { kind: 'process' | 'assay'; code: string; type: string } | null
+  /** This Sample's own availability, computed by the backend exactly as for the Sample page. */
+  availability: SampleAvailability
   children: SampleLineageNode[]
 }
+
+/** A Sample plotted on the map. */
+export type LocatedSample = SampleRef & { sample_type_id: number | null; subject_code: string | null; collection_date: string | null }
+
+/** One collection point: every Sample recorded at exactly these coordinates. */
+export type SampleSite = { latitude: string; longitude: string; samples: LocatedSample[] }
+
+export type SampleMap = { sites: SampleSite[]; located_count: number; unlocated_count: number }
+
+/** One column of an import template, from the same column list the importer reads. */
+export type TemplateColumnDoc = { name: string; header: string; required: boolean; description: string; format: string; example: string; in_template: boolean }
+
+export type TemplateDoc = { title: string; file_name: string; sheets: { name: string; description: string; columns: TemplateColumnDoc[] }[]; notes: string[] }
 
 export type SampleLineage = {
   sample: SampleRef

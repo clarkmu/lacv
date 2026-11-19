@@ -6,6 +6,7 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { panelHeaderClass, sectionTitleClass } from './common'
 
 type SortDirection = 'asc' | 'desc' | null
 
@@ -13,7 +14,8 @@ export type ListTableColumn<T> = {
   key: string
   label: string
   value: (row: T) => string | number | boolean | null | undefined
-  render?: (row: T) => ReactNode
+  /** previous is the row displayed directly above, after search and sorting (undefined for the first row). */
+  render?: (row: T, previous: T | undefined) => ReactNode
   /** Right-align with tabular figures so quantities and counts line up. */
   numeric?: boolean
 }
@@ -26,13 +28,18 @@ type ListTableProps<T> = {
   emptyMessage: string
   /** Extra filter controls shown beside the search field. */
   filters?: ReactNode
+  /** Text the search also matches that no column shows (e.g. legacy codes). */
+  searchText?: (row: T) => string
+  /** A section title shown in a header band above the toolbar; primary marks the page's main data. */
+  title?: ReactNode
+  primary?: boolean
 }
 
 /**
  * The LACV data table: a toolbar of list filters, then a sortable table that scrolls inside its own frame
  * with a sticky header and a pinned first (identity) column. Search runs over every column, shown or not.
  */
-export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, emptyMessage, filters }: ListTableProps<T>) {
+export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, emptyMessage, filters, searchText, title, primary = false }: ListTableProps<T>) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('')
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
@@ -42,7 +49,7 @@ export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, empt
   const visibleRows = useMemo(() => {
     const term = search.trim().toLowerCase()
     const filtered = term
-      ? rows.filter(row => columns.some(column => String(column.value(row) ?? '').toLowerCase().includes(term)))
+      ? rows.filter(row => columns.some(column => String(column.value(row) ?? '').toLowerCase().includes(term)) || (searchText?.(row) ?? '').toLowerCase().includes(term))
       : rows
     const column = columns.find(column => column.key === sortKey)
     if (!column || !sortDirection) return filtered
@@ -51,7 +58,7 @@ export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, empt
       column.value(right),
     ))
     return sortDirection === 'asc' ? sorted : sorted.reverse()
-  }, [columns, rows, search, sortDirection, sortKey])
+  }, [columns, rows, search, searchText, sortDirection, sortKey])
 
   function updateSort(nextKey: string) {
     if (nextKey === sortKey) {
@@ -69,6 +76,7 @@ export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, empt
 
   return (
     <div className="overflow-hidden rounded-md border bg-card shadow-xs">
+      {title && <div className={panelHeaderClass(primary)}><h2 className={sectionTitleClass}>{title}</h2></div>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-card px-3 py-2">
         <div className="relative w-full max-w-md">
           <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -127,7 +135,7 @@ export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, empt
           </TableRow>
         </TableHeader>
         <TableBody>
-          {visibleRows.map(row => (
+          {visibleRows.map((row, rowIndex) => (
             <TableRow key={getRowKey(row)} className="group border-0 hover:bg-transparent">
               {shownColumns.map((column, index) => (
                 // Opaque cell backgrounds so the pinned first column stays readable while the table scrolls sideways.
@@ -139,7 +147,7 @@ export function ListTable<T>({ rows, columns, searchPlaceholder, getRowKey, empt
                     index === 0 && 'sticky left-0 z-[1] border-r',
                   )}
                 >
-                  {column.render ? column.render(row) : formatValue(column.value(row))}
+                  {column.render ? column.render(row, visibleRows[rowIndex - 1]) : formatValue(column.value(row))}
                 </TableCell>
               ))}
             </TableRow>

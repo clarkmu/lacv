@@ -10,7 +10,7 @@ import { api, ApiError } from '../api'
 import { valueText } from '../assayResults'
 import { NewExecution } from '../components/assay/NewExecution'
 import { SampleFinder } from '../components/assay/SampleFinder'
-import { inputClass, Panel, QuantityValue, SampleLink, SecondaryCode, StatusBadge } from '../components/common'
+import { EmptyValue, hasPositiveResult, inputClass, Panel, positiveRowCellClass, QuantityValue, RESULT_TONE_CLASSES, ResultValue, resultTone, SampleLink, SecondaryCode, StatusBadge, NotLoaded } from '../components/common'
 import { formatDateTime } from '../format'
 import type { AssayDefinitionDetail, AssayExecution, ExecutionResult, ExecutionSample, ResultField } from '../types'
 
@@ -23,7 +23,7 @@ export function AssayDefinitionPage() {
   const { id = '' } = useParams()
   const query = useQuery({ queryKey: ['assay-definition', id], queryFn: () => api.getAssayDefinition(id) })
   if (query.isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading assay…</p>
-  if (!query.data) return <p className="py-6 text-sm text-muted-foreground">Assay not found.</p>
+  if (!query.data) return <NotLoaded error={query.error} what="Assay" />
   return <AssayWorkspace definition={query.data} />
 }
 
@@ -91,7 +91,7 @@ function AssayWorkspace({ definition }: { definition: AssayDefinitionDetail }) {
 /** A mean per numeric result field, with what it is and is not based on, so a blank or text value is never mistaken for a zero. */
 function ResultSummary({ definition }: { definition: AssayDefinitionDetail }) {
   return (
-    <Panel title="Averages" label="Averages" bodyClassName="p-0">
+    <Panel primary title="Averages" label="Averages" bodyClassName="p-0">
       {definition.result_summaries.length === 0 ? (
         <p className="px-3 py-3 text-[13px] text-muted-foreground">This assay lists no result fields.</p>
       ) : (
@@ -103,7 +103,7 @@ function ResultSummary({ definition }: { definition: AssayDefinitionDetail }) {
                 {!summary.averageable ? <span className="text-muted-foreground">Text result; not averaged</span> : (
                   <>
                     <span className="text-lg font-semibold tracking-tight tabular-nums">
-                      {summary.mean === null ? <span className="text-muted-foreground">—</span> : <>{formatMean(summary.mean)}{summary.unit && <span className="ml-1 text-xs font-normal text-muted-foreground">{summary.unit}</span>}</>}
+                      {summary.mean === null ? <EmptyValue /> : <>{formatMean(summary.mean)}{summary.unit && <span className="ml-1 text-xs font-normal text-muted-foreground">{summary.unit}</span>}</>}
                     </span>
                     <span className="ml-2 text-xs text-muted-foreground tabular-nums">
                       {summary.numeric_count ? `mean of ${summary.numeric_count}` : 'no numeric values yet'}
@@ -138,18 +138,22 @@ function Executions({ definition }: { definition: AssayDefinitionDetail }) {
   }, [focused, definition.executions.length])
 
   return (
-    <section aria-label="Executions" className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold tracking-tight">Executions <span className="font-normal text-muted-foreground tabular-nums">· {definition.executions.length}</span></h2>
+    <Panel
+      primary
+      label="Executions"
+      title={<>Executions <span className="font-normal text-muted-foreground tabular-nums">· {definition.executions.length}</span></>}
+      bodyClassName="p-0"
+      action={
         <div className="relative w-full max-w-xs">
           <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input aria-label="Filter executions" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter by execution, sample, person…" className={cn(inputClass, 'w-full pl-7 text-[13px]')} />
+          <input aria-label="Filter executions" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter by execution, sample, person…" className={cn(inputClass, 'h-7 w-full pl-7 text-[13px]')} />
         </div>
-      </div>
+      }
+    >
       {definition.executions.length === 0 ? (
-        <p className="rounded-md border border-dashed bg-card px-4 py-6 text-center text-sm text-muted-foreground">No executions yet. Use New execution to run this assay on one or more samples.</p>
+        <p className="px-4 py-6 text-center text-sm text-muted-foreground">No executions yet. Use New execution to run this assay on one or more samples.</p>
       ) : (
-        <div className="overflow-x-auto rounded-md border bg-card shadow-xs">
+        <div className="overflow-x-auto rounded-b-md">
           <table className="w-full min-w-[40rem] text-[13px]" aria-label="Executions and their samples">
             <colgroup><col className="w-56" /></colgroup>
             <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
@@ -170,7 +174,7 @@ function Executions({ definition }: { definition: AssayDefinitionDetail }) {
           </table>
         </div>
       )}
-    </section>
+    </Panel>
   )
 }
 
@@ -273,14 +277,17 @@ function ExecutionDetailsEditor({ execution, pending, error, onSave, onCancel }:
 function SampleRow({ definition, execution, row }: { definition: AssayDefinitionDetail; execution: AssayExecution; row: ExecutionSample }) {
   const saved = useExecutionSaved(definition)
   const remove = useMutation({ mutationFn: () => api.removeExecutionSample(execution.assay_execution_id, row.sample.sample_id), onSuccess: saved })
+  const positive = hasPositiveResult(row.results.map(result => result.interpretation))
   return (
-    <tr className="hover:bg-muted/30">
-      <td className="border-b py-1 pr-2 pl-6 whitespace-nowrap"><SampleLink sample={row.sample} /></td>
+    <tr className="hover:bg-muted/30" data-positive={positive || undefined}>
+      <td className={cn('border-b py-1 pr-2 pl-6 whitespace-nowrap', positive && positiveRowCellClass)} title={positive ? 'Positive result' : undefined}>
+        <SampleLink sample={row.sample} />
+      </td>
       <td className="border-b px-2 py-1 text-muted-foreground">{row.sample.sample_type}</td>
       {definition.result_fields.map(field => (
         <ResultCells key={field.assay_definition_result_id} definition={definition} execution={execution} row={row} field={field} />
       ))}
-      <td className="border-b px-2 py-1 text-right">{row.volume_used !== null ? <QuantityValue value={row.volume_used} unit={row.volume_unit} /> : <span className="text-muted-foreground/60">—</span>}</td>
+      <td className="border-b px-2 py-1 text-right"><ResultValue value={row.volume_used === null ? null : String(Number(row.volume_used))} unit={row.volume_unit} /></td>
       <td className="border-b px-2 py-1 text-right">
         {remove.error && <span role="alert" className="mr-1 text-xs text-destructive">{remove.error.message}</span>}
         {execution.samples.length > 1 && (
@@ -301,7 +308,7 @@ function columnCount(definition: AssayDefinitionDetail) {
 function FieldHeads({ field }: { field: ResultField }) {
   return (
     <>
-      <th className="border-b border-l px-2 py-1.5 font-medium whitespace-nowrap">{field.label}{field.unit && <span className="font-normal"> ({field.unit})</span>}</th>
+      <th className="border-b border-l px-2 py-1.5 font-medium whitespace-nowrap">{field.label}{field.unit && <span className="font-normal text-muted-foreground/80"> ({field.unit})</span>}</th>
       <th className="border-b px-2 py-1.5 font-normal whitespace-nowrap">Interpretation</th>
       <th className="border-b px-2 py-1.5 font-normal whitespace-nowrap">QC</th>
     </>
@@ -322,29 +329,34 @@ function ResultCells({ definition, execution, row, field }: { definition: AssayD
   return (
     <>
       <td className="border-b border-l px-1 py-0.5">
-        <EditableText label={`${field.label} for ${where}`} stored={valueText(result)} numeric={result?.numeric_value != null} pending={save.isPending} error={message} onSave={value => save.mutate({ value })} />
+        <EditableText label={`${field.label} for ${where}`} stored={valueText(result)} pending={save.isPending} error={message} onSave={value => save.mutate({ value })} />
         {message && <p role="alert" className="px-1.5 text-xs text-destructive">{message}</p>}
       </td>
       <td className="border-b px-1 py-0.5">
-        <EditableText label={`${field.label} interpretation for ${where}`} stored={result?.interpretation ?? ''} pending={save.isPending} onSave={interpretation => save.mutate({ interpretation })} narrow />
+        <EditableText label={`${field.label} interpretation for ${where}`} stored={result?.interpretation ?? ''} pending={save.isPending} onSave={interpretation => save.mutate({ interpretation })} narrow interpretation />
       </td>
       <td className="border-b px-1 py-0.5">
         {result ? (
           <select aria-label={`${field.label} QC for ${where}`} value={result.qc_status} disabled={save.isPending} onChange={event => save.mutate({ qc_status: event.target.value })} className="h-7 rounded-sm border border-transparent bg-transparent px-1 text-xs hover:border-input focus-visible:border-ring focus-visible:outline-none">
             {[...new Set([...QC_STATES, result.qc_status])].map(value => <option key={value} value={value}>{value}</option>)}
           </select>
-        ) : <span className="px-1.5 text-xs text-muted-foreground/50">—</span>}
+        ) : <EmptyValue className="px-1.5 text-xs" />}
       </td>
     </>
   )
 }
 
-/** Text edited in place: Enter or leaving the cell saves, Escape puts the saved text back. Blank clears it. */
-function EditableText({ label, stored, onSave, pending, error, numeric = false, narrow = false }: {
-  label: string; stored: string; onSave: (value: string | null) => void; pending: boolean; error?: string; numeric?: boolean; narrow?: boolean
+/**
+ * Text edited in place: Enter or leaving the cell saves, Escape puts the saved text back. Blank clears it.
+ * An interpretation cell shows its saved value in the result badge's tone and symbol (+ / −), and stays editable.
+ */
+function EditableText({ label, stored, onSave, pending, error, narrow = false, interpretation = false }: {
+  label: string; stored: string; onSave: (value: string | null) => void; pending: boolean; error?: string; narrow?: boolean; interpretation?: boolean
 }) {
   const [value, setValue] = useState(stored)
   useEffect(() => setValue(stored), [stored])
+  const tone = interpretation && value === stored ? resultTone(stored) : null
+  const style = tone ? RESULT_TONE_CLASSES[tone] : null
 
   function commit() {
     if (value.trim() !== stored && !pending) onSave(value.trim() || null)
@@ -355,7 +367,7 @@ function EditableText({ label, stored, onSave, pending, error, numeric = false, 
     if (event.key === 'Escape') setValue(stored)
   }
 
-  return (
+  const input = (
     <input
       aria-label={label}
       value={value}
@@ -365,13 +377,24 @@ function EditableText({ label, stored, onSave, pending, error, numeric = false, 
       onKeyDown={onKeyDown}
       aria-invalid={Boolean(error) || undefined}
       title={error}
+      data-tone={tone ?? undefined}
       className={cn(
-        'h-7 rounded-sm border border-transparent bg-transparent px-1.5 placeholder:text-muted-foreground/40 hover:border-input focus-visible:border-ring focus-visible:bg-card focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none',
+        'h-7 rounded-sm border border-transparent bg-transparent px-1.5 placeholder:text-muted-foreground/60 hover:border-input focus-visible:border-ring focus-visible:bg-card focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none',
         narrow ? 'w-28' : 'w-28 tabular-nums',
-        numeric && 'font-medium',
+        // A result value is bold whether it is a number or text such as "not detected"; the blank placeholder is the muted dash.
+        !narrow && value.trim() !== '' && 'font-semibold',
+        style && cn('pl-5 font-semibold', style.badge),
         error && 'border-destructive bg-destructive/5',
       )}
     />
+  )
+  if (!interpretation) return input
+  // Always wrapped, so the input keeps its place in the tree (and its focus) while the tone comes and goes.
+  return (
+    <span className="relative inline-block">
+      {style && <span aria-hidden="true" className={cn('pointer-events-none absolute top-1/2 left-1.5 -translate-y-1/2 font-mono text-xs font-semibold', style.badge.split(' ').filter(name => name.startsWith('text-') || name.startsWith('dark:text-')).join(' '))}>{style.symbol}</span>}
+      {input}
+    </span>
   )
 }
 
@@ -407,7 +430,7 @@ function Detail({ label, wide = false, children }: { label: string; wide?: boole
   return (
     <div className={cn('grid grid-cols-[7.5rem_1fr] items-baseline gap-2 border-b py-1.5 last:border-b-0', wide && 'sm:col-span-2 xl:col-span-3')}>
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0">{children || <span className="text-muted-foreground/60">—</span>}</dd>
+      <dd className="min-w-0">{children || <EmptyValue />}</dd>
     </div>
   )
 }

@@ -1,13 +1,14 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
-import { CornerDownRight, Plus, ScanBarcode } from 'lucide-react'
+import { CornerDownRight, Map as MapIcon, Plus, ScanBarcode } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Separator } from '@/components/ui/separator'
 import { api } from '../api'
-import { ListTable } from '../components/ListTable'
-import { errorClass, PageHeader, QuantityValue, SampleTypeLabel, SecondaryCode, StatusBadge } from '../components/common'
+import { ListTable, type ListTableColumn } from '../components/ListTable'
+import { EmptyValue, errorClass, PageHeader, QuantityValue, SampleTypeLabel, SecondaryCode, StatusBadge } from '../components/common'
+import { batchFriendlyOrder, continuesBatch } from '../batchGrouping'
 import { formatDateTime } from '../format'
 import type { SampleListItem } from '../types'
 
@@ -20,6 +21,36 @@ export function SamplesPage() {
     placeholderData: keepPreviousData,
   })
   const codes = new Map(data.map(sample => [sample.sample_id, sample.sample_code]))
+  const rows = useMemo(() => batchFriendlyOrder(data), [data])
+
+  // Base samples have no parent, so the Parent column only appears when derived samples are listed too.
+  const columns: ListTableColumn<SampleListItem>[] = [
+    {
+      // Named on the first row of each run of one batch, blank below it while the batch continues, named again when a
+      // run starts (also after a sort interleaves batches). A Sample without a batch shows the muted dash on every row.
+      key: 'batch', label: 'Batch', value: sample => sample.batch?.batch_code ?? '',
+      render: (sample, previous) => {
+        if (!sample.batch) return <span title="No shipping batch"><EmptyValue /></span>
+        if (continuesBatch(sample, previous)) return <span className="sr-only" data-batch-continued="">{sample.batch.batch_code}</span>
+        return <Link className="font-mono text-xs font-medium whitespace-nowrap text-foreground/80 hover:text-primary hover:underline" title={sample.batch.batch_name} to={`/batch/${sample.batch.batch_id}`}>{sample.batch.batch_code}</Link>
+      },
+    },
+    { key: 'sample_code', label: 'Sample', value: sample => sample.sample_code, render: sample => <Link className="font-mono text-[13px] font-semibold text-foreground decoration-primary/40 underline-offset-2 hover:text-primary hover:underline" to={`/sample/${sample.sample_id}`}>{sample.sample_code}</Link> },
+    { key: 'sample_type', label: 'Type', value: sample => sample.sample_type, render: sample => <SampleTypeLabel typeId={sample.sample_type_id} name={sample.sample_type} /> },
+    { key: 'status', label: 'Status', value: sample => sample.status, render: sample => <StatusBadge status={sample.status} /> },
+    { key: 'label', label: 'Label', value: sample => sample.label, render: sample => <span className="text-foreground">{sample.label}</span> },
+    ...(baseSamplesOnly ? [] : [{
+      key: 'parent', label: 'Parent', value: (sample: SampleListItem) => (sample.parent_sample_id ? codes.get(sample.parent_sample_id) : ''),
+      render: (sample: SampleListItem) => sample.parent_sample_id ? (
+        <Link className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-primary hover:underline" to={`/sample/${sample.parent_sample_id}`}>
+          <CornerDownRight aria-hidden="true" className="size-3 opacity-60" />{codes.get(sample.parent_sample_id)}
+        </Link>
+      ) : '',
+    }]),
+    { key: 'quantity', label: 'Quantity', numeric: true, value: sample => (sample.current_quantity === null ? null : Number(sample.current_quantity)), render: sample => <QuantityValue value={sample.current_quantity} unit={sample.quantity_unit} /> },
+    { key: 'external_sample_id', label: 'External ID', value: sample => sample.external_sample_id, render: sample => <SecondaryCode>{sample.external_sample_id}</SecondaryCode> },
+    { key: 'received_date', label: 'Received', value: sample => sample.received_date, render: sample => <span className="text-muted-foreground tabular-nums">{formatDateTime(sample.received_date)}</span> },
+  ]
 
   if (isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading samples…</p>
   if (error) return <p role="alert" className={errorClass}>Could not load samples.</p>
@@ -32,38 +63,24 @@ export function SamplesPage() {
         actions={<>
           <OpenByCode />
           <Separator orientation="vertical" className="mx-1 hidden data-[orientation=vertical]:h-6 sm:block" />
+          <Button asChild variant="outline" size="sm"><Link to="/samples/map"><MapIcon aria-hidden="true" />Map</Link></Button>
           <Button asChild size="sm"><Link to="/samples/new"><Plus aria-hidden="true" />Create root sample</Link></Button>
         </>}
       />
       <ListTable<SampleListItem>
-        rows={data}
-        searchPlaceholder="Filter by code, legacy code, type, status, label, or external ID"
+        rows={rows}
+        searchPlaceholder="Filter by code, batch, legacy code, type, status, label, or external ID"
         getRowKey={sample => sample.sample_id}
         emptyMessage="No samples match your filter."
+        // Legacy Material codes are not a column, but an old label can still be found by typing its code.
+        searchText={sample => [...sample.legacy_codes, sample.batch?.batch_name ?? ''].join(' ')}
         filters={
           <div className="flex items-center gap-2">
             <Checkbox id="base-samples-only" checked={baseSamplesOnly} onCheckedChange={checked => setBaseSamplesOnly(checked === true)} />
             <label htmlFor="base-samples-only" className="cursor-pointer text-[13px] select-none">Base samples only</label>
           </div>
         }
-        columns={[
-          { key: 'sample_code', label: 'Sample', value: sample => sample.sample_code, render: sample => <Link className="font-mono text-[13px] font-semibold text-foreground decoration-primary/40 underline-offset-2 hover:text-primary hover:underline" to={`/sample/${sample.sample_id}`}>{sample.sample_code}</Link> },
-          { key: 'sample_type', label: 'Type', value: sample => sample.sample_type, render: sample => <SampleTypeLabel typeId={sample.sample_type_id} name={sample.sample_type} /> },
-          { key: 'status', label: 'Status', value: sample => sample.status, render: sample => <StatusBadge status={sample.status} /> },
-          { key: 'label', label: 'Label', value: sample => sample.label, render: sample => <span className="text-foreground">{sample.label}</span> },
-          {
-            key: 'parent', label: 'Parent', value: sample => (sample.parent_sample_id ? codes.get(sample.parent_sample_id) : ''),
-            render: sample => sample.parent_sample_id ? (
-              <Link className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-primary hover:underline" to={`/sample/${sample.parent_sample_id}`}>
-                <CornerDownRight aria-hidden="true" className="size-3 opacity-60" />{codes.get(sample.parent_sample_id)}
-              </Link>
-            ) : '',
-          },
-          { key: 'quantity', label: 'Quantity', numeric: true, value: sample => (sample.current_quantity === null ? null : Number(sample.current_quantity)), render: sample => <QuantityValue value={sample.current_quantity} unit={sample.quantity_unit} /> },
-          { key: 'external_sample_id', label: 'External ID', value: sample => sample.external_sample_id, render: sample => <SecondaryCode>{sample.external_sample_id}</SecondaryCode> },
-          { key: 'received_date', label: 'Received', value: sample => sample.received_date, render: sample => <span className="text-muted-foreground tabular-nums">{formatDateTime(sample.received_date)}</span> },
-          { key: 'legacy_codes', label: 'Legacy codes', value: sample => sample.legacy_codes.join(' '), render: sample => <SecondaryCode className="text-muted-foreground/80">{sample.legacy_codes.join(' ')}</SecondaryCode> },
-        ]}
+        columns={columns}
       />
     </section>
   )

@@ -32,7 +32,7 @@ const execution = (id: number, name: string, samples: ExecutionSample[], fields:
 })
 const listed = (sample_id: number, sample_code: string): SampleListItem => ({
   ...ref(sample_id, sample_code), sample_type_id: 7, parent_sample_id: 1, batch_id: null, external_sample_id: null, subject_code: null, aliquot_number: null,
-  label: null, received_date: null, current_quantity: '50.000000', quantity_unit: 'uL', storage_location_id: null, legacy_codes: [],
+  label: null, received_date: null, current_quantity: '50.000000', quantity_unit: 'uL', storage_location_id: null, legacy_codes: [], batch: null,
 })
 
 let definition: AssayDefinitionDetail
@@ -98,6 +98,15 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
     }))
   }
   if (url.pathname === '/api/assay-definitions/1') return Promise.resolve(Response.json(definition))
+  if (url.pathname === '/api/assay-definitions/1/executions/import-template/columns') {
+    return Promise.resolve(Response.json({
+      title: 'LACV qPCR execution template', file_name: 'lacv-qpcr-execution.xlsx', notes: [],
+      sheets: [{ name: 'Samples', description: 'One row per sample.', columns: [
+        { name: 'sample_code', header: 'sample_code *', required: true, description: "The Sample's code.", format: 'Text', example: 'S-1-RNA', in_template: true },
+        { name: 'LACV CT interpretation', header: 'LACV CT interpretation', required: false, description: 'What the result means.', format: 'Text; usually positive, negative or inconclusive', example: 'positive', in_template: true },
+      ] }],
+    }))
+  }
   if (url.pathname === '/api/samples') return Promise.resolve(Response.json([listed(31, 'S-1-RNA'), listed(32, 'S-2-RNA'), listed(33, 'S-3-RNA')]))
   if (url.pathname === '/api/assay-executions/performed-by') return Promise.resolve(Response.json(['J. Chen']))
   return Promise.resolve(Response.json({ detail: 'Not found' }, { status: 404 }))
@@ -279,7 +288,13 @@ test('creating from an .xlsx workbook is part of the new-execution workflow', as
 
   expect(byLabel<HTMLInputElement>('Execution workbook').type).toBe('file')
   expect(button('Import from XLSX')).toBeDefined()
-  expect(container.querySelector('a[href="/api/assay-definitions/1/executions/import-template"]')?.textContent).toContain('Template')
+  // The template is explained before it downloads; the download itself is the real template.
+  await act(async () => button('Template')!.click())
+  await waitFor(() => (document.querySelector('[role="dialog"]')?.textContent ?? '').includes('sample_code *'))
+  const dialog = document.querySelector('[role="dialog"]')!
+  expect(dialog.textContent).toContain('usually positive, negative or inconclusive')
+  const download = [...dialog.querySelectorAll('a')].find(link => link.textContent?.includes('Download template'))!
+  expect(download.getAttribute('href')).toBe('/api/assay-definitions/1/executions/import-template')
 })
 
 test('an uploaded workbook opens a review dialog, and its confirmed rows join the new execution', async () => {
@@ -302,4 +317,36 @@ test('an uploaded workbook opens a review dialog, and its confirmed rows join th
   expect(byLabel('LACV CT for S-1-RNA').value).toBe('29.9')
   expect(byLabel('LACV CT interpretation for S-1-RNA').value).toBe('positive')
   expect(byLabel('Execution name').value).toBe('Plate from XLSX')
+})
+
+test('a saved interpretation shows its result tone and symbol, and the cell stays one editable input while typing', async () => {
+  const interpretation = cell('LACV CT interpretation', 'P-02-RNA')
+  expect(interpretation.getAttribute('data-tone')).toBe('negative')
+  expect(interpretation.parentElement!.textContent).toBe('−')
+
+  await type(interpretation, 'negat')
+  expect(interpretation.getAttribute('data-tone'), 'unsaved text is not toned').toBeNull()
+  expect(cell('LACV CT interpretation', 'P-02-RNA'), 'the same input element: focus is not lost').toBe(interpretation)
+  await key(interpretation, 'Escape')
+  expect(interpretation.getAttribute('data-tone')).toBe('negative')
+})
+
+test('rows with a positive result carry a left-edge flag; other rows do not, and values are bold with muted units', () => {
+  const row = (code: string) => [...container.querySelectorAll('tbody tr')].find(candidate => candidate.querySelector('td')?.textContent === code)!
+  const positive = row('P-01-RNA')
+  expect(positive.getAttribute('data-positive')).toBe('true')
+  expect(positive.querySelector('td')!.className).toContain('shadow-[inset_3px_0_0_0')
+  expect(positive.querySelector('td')!.getAttribute('title')).toBe('Positive result')
+  // The flag supplements the badge-styled interpretation, which carries the meaning in text and symbol.
+  expect(cell('LACV CT interpretation', 'P-01-RNA').getAttribute('data-tone')).toBe('positive')
+  for (const code of ['P-02-RNA', 'P-03-RNA']) {
+    expect(row(code).getAttribute('data-positive'), code).toBeNull()
+    expect(row(code).querySelector('td')!.className, code).not.toContain('shadow-[inset')
+  }
+  expect(cell('LACV CT', 'P-01-RNA').className).toContain('font-semibold')
+  expect(cell('RNase P CT', 'P-03-RNA').className, 'an empty cell is not bold').not.toContain('font-semibold')
+  expect(cell('RNase P CT', 'P-03-RNA').placeholder).toBe('—')
+  const unit = [...container.querySelectorAll('thead th')].find(th => th.textContent?.startsWith('LACV CT ('))!.querySelector('span')!
+  expect(unit.textContent).toBe(' (cycles)')
+  expect(unit.className).toContain('text-muted-foreground')
 })

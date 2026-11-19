@@ -1,55 +1,81 @@
 import type {
   AssayDefinitionDetail, AssayDefinitionDraft, AssayDefinitionListItem, AssayExecution, BatchDetail, ExecutionImportPreview, ExecutionSampleDraft,
-  BatchListItem, BatchSampleImportPreview, BatchSampleImportRow, ProcessEventDetail, SampleDetail, SampleLineage, SampleListItem, SampleRef, SampleType,
-  StorageLocation, StorageLocationDetail,
+  BatchListItem, BatchSampleImportPreview, BatchSampleImportRow, ProcessEventDetail, SampleDetail, SampleLineage, SampleListItem, SampleMap, SampleRef, SampleType,
+  StorageLocation, StorageLocationDetail, TemplateDoc,
 } from './types'
 
 const API = '/api'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const isMultipart = options?.body instanceof FormData
-  const response = await fetch(`${API}${path}`, {
-    headers: isMultipart ? options?.headers : { 'Content-Type': 'application/json', ...(options?.headers || {}) },
-    ...options,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API}${path}`, {
+      headers: isMultipart ? options?.headers : { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+      ...options,
+    })
+  } catch {
+    throw new ApiError('Could not reach the LACV server. Check the network connection and try again; nothing was saved.')
+  }
   if (!response.ok) throw await readError(response)
   if (response.status === 204) return undefined as T
   return response.json()
 }
 
-/** An API failure. fieldErrors maps a request field (e.g. "volume_used") to its message, so forms can show it in place. */
+/** One located problem from a validation error: path is the request path without "body" (e.g. ["samples", 2, "collection_date"]). */
+export type ApiProblem = { path: (string | number)[]; message: string }
+
+/**
+ * An API failure. message is a sentence for the user. fieldErrors maps a request field (e.g. "volume_used"), and its
+ * full path (e.g. "samples.2.collection_date"), to its message, so forms can show it in place.
+ */
 export class ApiError extends Error {
   fieldErrors: Record<string, string>
+  problems: ApiProblem[]
+  status: number
 
-  constructor(message: string, fieldErrors: Record<string, string> = {}) {
+  constructor(message: string, fieldErrors: Record<string, string> = {}, problems: ApiProblem[] = [], status = 0) {
     super(message)
     this.fieldErrors = fieldErrors
+    this.problems = problems
+    this.status = status
   }
 }
 
-async function readError(response: Response) {
+/** "collection_date" → "Collection date"; a list index is a row, counted from 1. */
+function describePath(path: (string | number)[]) {
+  const parts = path.map(part => (typeof part === 'number' ? `row ${part + 1}` : part.replace(/_/g, ' ')))
+  const text = parts.join(', ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+// The backend writes these messages for people; only fall back to the raw text when the response is not ours.
+export async function readError(response: Response) {
   const text = await response.text()
   try {
     const body = JSON.parse(text)
-    if (typeof body.detail === 'string') return new ApiError(body.detail)
+    if (typeof body.detail === 'string') return new ApiError(body.detail, {}, [], response.status)
     if (body.detail && typeof body.detail.message === 'string') {
-      return new ApiError([body.detail.message, ...(body.detail.problems ?? [])].join('. '))
+      return new ApiError([body.detail.message, ...(body.detail.problems ?? [])].join('. '), {}, [], response.status)
     }
     if (Array.isArray(body.detail)) {
       const items = body.detail as { loc?: (string | number)[]; msg: string }[]
-      // Keyed by the field name, and also by its full path (e.g. "changes.2.aliquot_number") for errors about one row of a list.
+      const problems = items.map(item => ({ path: (item.loc ?? []).filter((part, index) => !(index === 0 && part === 'body')), message: item.msg.replace(/^Value error, /, '') }))
       const fieldErrors: Record<string, string> = {}
-      for (const item of items.filter(item => item.loc && item.loc.length > 1)) {
-        const message = item.msg.replace(/^Value error, /, '')
-        fieldErrors[String(item.loc!.at(-1))] ??= message
-        fieldErrors[item.loc!.slice(1).join('.')] = message
+      for (const problem of problems.filter(problem => problem.path.length > 0)) {
+        fieldErrors[String(problem.path.at(-1))] ??= problem.message
+        fieldErrors[problem.path.join('.')] = problem.message
       }
-      return new ApiError(items.map(item => `${item.loc?.slice(1).join('.') || 'request'}: ${item.msg}`).join('; '), fieldErrors)
+      const message = problems.map(problem => (problem.path.length ? `${describePath(problem.path)}: ${problem.message}` : problem.message)).join('; ')
+      return new ApiError(message, fieldErrors, problems, response.status)
     }
   } catch {
-    // Not JSON; show the raw text.
+    // Not JSON (e.g. a proxy error page); fall through to a plain message.
   }
-  return new ApiError(text || response.statusText)
+  if (response.status >= 500 || !text || text.trimStart().startsWith('<')) {
+    return new ApiError(`The server could not complete the request (${response.status} ${response.statusText || 'error'}). Nothing was saved; try again, and if it keeps happening tell the LACV administrator.`, {}, [], response.status)
+  }
+  return new ApiError(text, {}, [], response.status)
 }
 
 function formWith(file: File) {
@@ -65,13 +91,16 @@ export const api = {
   listBatches: () => request<BatchListItem[]>('/batches'),
   getBatch: (id: string | number) => request<BatchDetail>(`/batches/${id}`),
   updateBatchSamples: (batchId: number, payload: { changes: Record<string, unknown>[]; operator_name?: string | null; change_notes?: string | null }) => patch<BatchDetail>(`/batches/${batchId}/samples`, payload),
-  previewSampleBatchImport: (file: File) => { const body = new FormData(); body.append('file', file); return request<BatchSampleImportPreview>('/batches/sample-import/preview', { method: 'POST', headers: {}, body }) },
+  previewSampleBatchImport: (file: File) => request<BatchSampleImportPreview>('/batches/sample-import/preview', { method: 'POST', headers: {}, body: formWith(file) }),
   createSampleBatch: (payload: { batch_name: string; samples: BatchSampleImportRow[] }) => post<BatchDetail>('/batches/sample-import', payload),
+  batchTemplateUrl: () => `${API}/batches/sample-template`,
+  describeBatchTemplate: () => request<TemplateDoc>('/batches/sample-template/columns'),
 
   listSamples: (options: { rootOnly?: boolean } = {}) => request<SampleListItem[]>(options.rootOnly ? '/samples?root_only=true' : '/samples'),
   lookupSample: (code: string) => request<SampleRef>(`/samples/lookup?code=${encodeURIComponent(code)}`),
   getSample: (id: string | number) => request<SampleDetail>(`/samples/${id}`),
   getSampleLineage: (id: string | number) => request<SampleLineage>(`/samples/${id}/lineage`),
+  getSampleMap: () => request<SampleMap>('/samples/map'),
   createSample: (payload: Record<string, unknown>) => post<SampleDetail>('/samples', payload),
   createChildSample: (parentId: number, payload: Record<string, unknown>) => post<SampleDetail>(`/samples/${parentId}/children`, payload),
   updateSample: (id: number, changes: Record<string, unknown>) => patch<SampleDetail>(`/samples/${id}`, changes),
@@ -93,6 +122,7 @@ export const api = {
   previewExecutionImport: (definitionId: number, file: File) =>
     request<ExecutionImportPreview>(`/assay-definitions/${definitionId}/executions/import/preview`, { method: 'POST', headers: {}, body: formWith(file) }),
   executionTemplateUrl: (definitionId: number) => `${API}/assay-definitions/${definitionId}/executions/import-template`,
+  describeExecutionTemplate: (definitionId: number) => request<TemplateDoc>(`/assay-definitions/${definitionId}/executions/import-template/columns`),
 
   listPerformedBy: () => request<string[]>('/assay-executions/performed-by'),
   updateAssayExecution: (executionId: number, changes: Record<string, unknown>) => patch<AssayExecution>(`/assay-executions/${executionId}`, changes),

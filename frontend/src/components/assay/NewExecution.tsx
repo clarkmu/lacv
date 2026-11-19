@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, FileSpreadsheet, Save, X } from 'lucide-react'
+import { FileSpreadsheet, Save, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { api, ApiError } from '../../api'
-import { inputClass } from '../common'
+import { inputClass, sectionTitleClass } from '../common'
 import { SuggestInput } from '../SuggestInput'
+import { TemplateDownload } from '../TemplateDownload'
 import { ImportReview, type ReviewedRow } from './ImportReview'
 import { SampleFinder } from './SampleFinder'
 import type { AssayDefinitionDetail, AssayExecution, ExecutionImportPreview, SampleRef } from '../../types'
@@ -118,9 +119,15 @@ export function NewExecution({ definition, onSaved, onCancel }: { definition: As
   return (
     <form onSubmit={submit} aria-label="New execution" className="rounded-md border border-primary/30 bg-card shadow-xs">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
-        <h2 className="text-[13px] font-semibold tracking-tight">New execution <span className="font-normal text-muted-foreground">of {definition.assay_name}</span></h2>
+        <h2 className={sectionTitleClass}>New execution <span className="font-normal text-muted-foreground">of {definition.assay_name}</span></h2>
         <div className="flex items-center gap-2">
-          <a href={api.executionTemplateUrl(definition.assay_definition_id)} download className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"><Download aria-hidden="true" className="size-3" />Template</a>
+          <TemplateDownload
+            compact
+            label="Template"
+            templateUrl={api.executionTemplateUrl(definition.assay_definition_id)}
+            queryKey={['execution-template-doc', definition.assay_definition_id]}
+            loadDoc={() => api.describeExecutionTemplate(definition.assay_definition_id)}
+          />
           <input ref={fileInput} type="file" accept=".xlsx" aria-label="Execution workbook" className="sr-only" onChange={event => { const file = event.target.files?.[0]; if (file) imported.mutate(file); event.target.value = '' }} />
           <Button type="button" variant="outline" size="sm" className="h-7" disabled={imported.isPending} onClick={() => fileInput.current?.click()}>
             <FileSpreadsheet aria-hidden="true" />{imported.isPending ? 'Reading…' : 'Import from XLSX'}

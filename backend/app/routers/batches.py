@@ -1,34 +1,22 @@
-from io import BytesIO
+import logging
 import re
 from datetime import datetime
+from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
+from ..batch_import import COLUMNS, MAX_WORKBOOK_BYTES, column_docs, parse_row, read_batch_workbook, sample_type_lookup, validate_rows
 from ..database import get_db
 from ..models import Batch, Sample, SampleType, StorageLocation
-from ..sample_rules import apply_sample_changes, require_unique_sample_code
-from ..schemas import (
-    BatchBrief, BatchDetail, BatchListItem, BatchSampleImportCreate, BatchSampleImportPreview, BatchSampleImportRow, BatchSamplesUpdate,
-)
+from ..sample_rules import apply_sample_changes
+from ..schemas import BatchBrief, BatchDetail, BatchListItem, BatchSampleImportCreate, BatchSampleImportPreview, BatchSamplesUpdate, TemplateDoc
+from ..spreadsheet import XLSX_MEDIA_TYPE, template_workbook
 
 router = APIRouter(prefix="/batches", tags=["batches"])
-
-SAMPLE_BATCH_COLUMNS = [
-    "sample_code",
-    "subject_code",
-    "external_sample_id",
-    "aliquot_number",
-    "sample_type",
-    "source_type",
-    "source_description",
-    "collection_date",
-    "received_date",
-    "status",
-    "notes",
-]
+logger = logging.getLogger("lacv")
 
 @router.get("", response_model=list[BatchListItem])
 def list_batches(db: Session = Depends(get_db)):
@@ -40,59 +28,52 @@ def list_batches(db: Session = Depends(get_db)):
 
 @router.get("/sample-template")
 def download_sample_batch_template():
-    from openpyxl import Workbook
-
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Samples"
-    sheet.append(SAMPLE_BATCH_COLUMNS)
-    for column_index, column_name in enumerate(SAMPLE_BATCH_COLUMNS, start=1):
-        sheet.cell(row=1, column=column_index).value = column_name
-        sheet.column_dimensions[sheet.cell(row=1, column=column_index).column_letter].width = max(len(column_name) + 2, 18)
-    output = BytesIO()
-    workbook.save(output)
-    output.seek(0)
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    """The batch workbook: a Samples sheet whose header row is app/batch_import.COLUMNS (required columns marked *)."""
+    return Response(
+        template_workbook({"Samples": (COLUMNS, [])}),
+        media_type=XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": 'attachment; filename="sample-batch-template.xlsx"'},
     )
 
+@router.get("/sample-template/columns", response_model=TemplateDoc)
+def describe_sample_batch_template(db: Session = Depends(get_db)):
+    """What each column of the batch template means, from the same column list the importer reads."""
+    return column_docs(db)
+
 @router.post("/sample-import/preview", response_model=BatchSampleImportPreview)
-async def preview_sample_batch_import(file: UploadFile = File(...)):
+async def preview_sample_batch_import(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Read a batch workbook and check every row, without saving anything."""
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(400, "Upload an .xlsx file")
-    samples = _read_sample_rows(BytesIO(await file.read()))
-    return {"samples": samples}
+        raise HTTPException(400, "Choose an Excel workbook ending in .xlsx (start from the template). Older .xls, .xlsm and .csv files are not accepted; open them in Excel and save as \"Excel Workbook (.xlsx)\".")
+    content = await file.read(MAX_WORKBOOK_BYTES + 1)
+    if len(content) > MAX_WORKBOOK_BYTES:
+        raise HTTPException(413, "The workbook is larger than 2 MB. Remove other sheets or images, or split the batch into several files.")
+    return read_batch_workbook(content, file.filename, db)
 
 @router.post("/sample-import", response_model=BatchDetail)
 def create_sample_batch(payload: BatchSampleImportCreate, db: Session = Depends(get_db)):
-    """A shipping batch of root Samples. Derived Samples are created later from their parents, not imported."""
-    batch_name = payload.batch_name.strip()
-    if not batch_name:
-        raise HTTPException(400, "Batch name is required")
-    if not payload.samples:
-        raise HTTPException(400, "At least one sample is required")
+    """A shipping batch of root Samples, all saved or none. Derived Samples are created later from their parents, not imported.
 
-    type_ids = _sample_type_ids_by_name(payload.samples, db)
-    batch = Batch(batch_code=_next_batch_code(batch_name, db), batch_name=batch_name)
+    Every row is checked as in the preview; problems come back in FastAPI's validation shape, located at
+    samples.<index>.<column>, so the confirm page can mark each cell.
+    """
+    rows = [row.model_dump() for row in payload.samples]
+    problems = validate_rows(rows, db)
+    if problems:
+        raise HTTPException(422, [
+            {"loc": ["body", "samples", index, problem["column"]], "msg": problem["message"], "type": "value_error"}
+            for index, row_problems in sorted(problems.items()) for problem in row_problems
+        ])
+
+    type_ids = sample_type_lookup(db)
+    batch = Batch(batch_code=_next_batch_code(payload.batch_name, db), batch_name=payload.batch_name)
     db.add(batch)
     db.flush()
-
-    seen_codes = set()
-    for row in payload.samples:
-        sample_code = row.sample_code.strip()
-        if not sample_code:
-            raise HTTPException(400, "Every sample row must include sample_code")
-        if sample_code in seen_codes:
-            raise HTTPException(400, f"Duplicate sample_code in upload: {sample_code}")
-        seen_codes.add(sample_code)
-        require_unique_sample_code(sample_code, db)
-        sample_data = row.model_dump(exclude={"sample_type"})
-        sample_data["sample_code"] = sample_code
-        sample_data["sample_type_id"] = type_ids.get((row.sample_type or "").strip().lower())
-        db.add(Sample(batch_id=batch.batch_id, **sample_data))
-
+    for row in rows:
+        values = parse_row(row, lambda *_: None)
+        sample_type = values.pop("sample_type", None)
+        values["status"] = values.get("status") or "expected"
+        db.add(Sample(batch_id=batch.batch_id, sample_type_id=type_ids.get(sample_type.strip().lower()) if sample_type else None, **values))
     db.commit()
     return get_batch(batch.batch_id, db)
 
@@ -124,7 +105,8 @@ async def import_batches(file: UploadFile = File(...), db: Session = Depends(get
         raise
     except Exception as exc:
         db.rollback()
-        raise HTTPException(400, f"Could not import spreadsheet: {exc}") from exc
+        logger.warning("Batch list import of %r failed", file.filename, exc_info=True)
+        raise HTTPException(400, "The spreadsheet could not be imported. Check that it is an .xlsx workbook whose first sheet has batch_code and batch_name columns.") from exc
 
 @router.get("/{batch_id}", response_model=BatchDetail)
 def get_batch(batch_id: int, db: Session = Depends(get_db)):
@@ -232,48 +214,6 @@ def _aliquot_conflicts(members: dict[int, Sample], planned: list[tuple[Sample, d
             errors.append(_change_error(index, "aliquot_number", f"Aliquot {number} is also {others}: same subject and Material{when}"))
     return errors
 
-
-def _read_sample_rows(file_data: BytesIO) -> list[BatchSampleImportRow]:
-    try:
-        from openpyxl import load_workbook
-        workbook = load_workbook(file_data, read_only=True, data_only=True)
-        rows = workbook.active.iter_rows(values_only=True)
-        headers = [str(value).strip().lower() if value is not None else "" for value in next(rows)]
-    except StopIteration:
-        raise HTTPException(400, "The spreadsheet is empty")
-    except Exception as exc:
-        raise HTTPException(400, f"Could not read spreadsheet: {exc}") from exc
-
-    if "sample_code" not in headers:
-        raise HTTPException(400, "The spreadsheet must include a sample_code column")
-
-    samples = []
-    for values in rows:
-        data = {header: _clean_cell_value(value) for header, value in zip(headers, values) if header in SAMPLE_BATCH_COLUMNS}
-        if not any(value not in (None, "") for value in data.values()):
-            continue
-        if not data.get("sample_code"):
-            raise HTTPException(400, "Every non-empty row must include sample_code")
-        data["status"] = data.get("status") or "expected"
-        samples.append(BatchSampleImportRow(**data))
-    return samples
-
-def _sample_type_ids_by_name(rows: list[BatchSampleImportRow], db: Session) -> dict[str, int]:
-    """Spreadsheet sample types must name an existing sample type (by name or code)."""
-    lookup = {}
-    for sample_type in db.scalars(select(SampleType).where(SampleType.is_active == True)).all():
-        lookup[sample_type.type_name.strip().lower()] = sample_type.sample_type_id
-        lookup[sample_type.type_code.strip().lower()] = sample_type.sample_type_id
-    unknown = sorted({row.sample_type.strip() for row in rows if row.sample_type and row.sample_type.strip().lower() not in lookup})
-    if unknown:
-        raise HTTPException(400, "Unknown sample type: " + ", ".join(unknown) + ". Create it under sample types first.")
-    return lookup
-
-
-def _clean_cell_value(value):
-    if isinstance(value, str):
-        return value.strip() or None
-    return value
 
 def _next_batch_code(batch_name: str, db: Session) -> str:
     base = re.sub(r"[^a-zA-Z0-9]+", "-", batch_name.strip()).strip("-").upper()[:32] or "BATCH"

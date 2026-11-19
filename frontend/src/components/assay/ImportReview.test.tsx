@@ -14,7 +14,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const ref = (sample_id: number, sample_code: string): SampleRef => ({ sample_id, sample_code, sample_type: 'RNA', status: 'available' })
 const listed = (sample: SampleRef): SampleListItem => ({
   ...sample, sample_type_id: 7, parent_sample_id: null, batch_id: null, external_sample_id: null, subject_code: null, aliquot_number: null,
-  label: null, received_date: null, current_quantity: null, quantity_unit: null, storage_location_id: null, legacy_codes: [],
+  label: null, received_date: null, current_quantity: null, quantity_unit: null, storage_location_id: null, legacy_codes: [], batch: null,
 })
 const A = ref(1, 'PEDS-01-RNA')
 const B = ref(2, 'PEDS-02-RNA')

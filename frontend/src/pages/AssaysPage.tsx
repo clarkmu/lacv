@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Plus, X } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { api } from '../api'
@@ -10,11 +10,17 @@ import { errorClass, PageHeader, QuantityValue, SecondaryCode, StatusBadge } fro
 import { formatDateTime } from '../format'
 import type { AssayDefinitionListItem } from '../types'
 
-/** The assays the lab performs: reusable procedures, each run on many Samples. */
+/**
+ * The assays the lab performs: reusable procedures, each run on many Samples. ?type=qPCR narrows the list to assays whose
+ * type contains that text (any case): the Results menu's shortcut to where those results are entered and read.
+ */
 export function AssaysPage() {
   const [showRetired, setShowRetired] = useState(false)
+  const [params] = useSearchParams()
+  const type = params.get('type')?.trim() ?? ''
   const { data = [], isLoading, error } = useQuery({ queryKey: ['assay-definitions'], queryFn: () => api.listAssayDefinitions() })
-  const rows = showRetired ? data : data.filter(definition => definition.is_active)
+  const ofType = type ? data.filter(definition => definition.assay_type.toLowerCase().includes(type.toLowerCase())) : data
+  const rows = showRetired ? ofType : ofType.filter(definition => definition.is_active)
 
   if (isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading assays…</p>
   if (error) return <p role="alert" className={errorClass}>Could not load assays.</p>
@@ -22,8 +28,10 @@ export function AssaysPage() {
   return (
     <section>
       <PageHeader
-        title="Assays"
-        description="Procedures the lab performs. Open an assay to run it on one or more samples and enter their results."
+        title={type ? `${type} results` : 'Assays'}
+        description={type
+          ? `Assays of type ${type}. Open one to see its executions and every sample's results.`
+          : 'Procedures the lab performs. Open an assay to run it on one or more samples and enter their results.'}
         actions={<>
           <Button asChild size="sm"><Link to="/assays/new"><Plus aria-hidden="true" />New assay</Link></Button>
         </>}
@@ -32,9 +40,17 @@ export function AssaysPage() {
         rows={rows}
         searchPlaceholder="Filter by name, code, type, target, kit, or instrument"
         getRowKey={definition => definition.assay_definition_id}
-        emptyMessage="No assays match your filter."
+        emptyMessage={type && ofType.length === 0
+          ? `No ${type} assays yet. Results are recorded on an assay's page: create an assay of type ${type} to record them.`
+          : 'No assays match your filter.'}
         filters={
           <div className="flex items-center gap-2">
+            {type && (
+              <span className="inline-flex h-7 items-center gap-1 rounded-md border bg-secondary pr-1 pl-2 text-xs">
+                Type: <span className="font-medium">{type}</span>
+                <Link to="/assays" aria-label={`Show all assay types, not only ${type}`} className="grid size-5 place-items-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"><X aria-hidden="true" className="size-3" /></Link>
+              </span>
+            )}
             <Checkbox id="show-retired" checked={showRetired} onCheckedChange={checked => setShowRetired(checked === true)} />
             <label htmlFor="show-retired" className="cursor-pointer text-[13px] select-none">Show retired</label>
           </div>

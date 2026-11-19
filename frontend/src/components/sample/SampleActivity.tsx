@@ -2,9 +2,10 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { ArrowRight, FlaskConical, MapPin, Pipette, Workflow, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { executionHref, resultSetText } from '../../assayResults'
+import { executionHref } from '../../assayResults'
+import { ResultSet } from '../assay/ResultSet'
 import { cn } from '@/lib/utils'
-import { SampleLink, StatusBadge } from '../common'
+import { panelHeaderClass, SampleLink, sectionTitleClass, StatusBadge } from '../common'
 import { formatDateTime, formatQuantity } from '../../format'
 import type { SampleDetail, SampleRef } from '../../types'
 
@@ -48,7 +49,7 @@ export function buildActivity(sample: SampleDetail): ActivityItem[] {
       kind: 'assay' as const,
       date: assay.assay_date,
       title: <><Link className="text-primary hover:underline" to={executionHref(assay)}>{assay.execution_name}</Link> <span className="text-muted-foreground">{assay.assay_name}</span></>,
-      detail: <span className="flex flex-wrap items-center gap-1.5"><StatusBadge status={assay.status} />QC <StatusBadge status={assay.qc_status} /><span className="text-muted-foreground">{assay.results?.length ? resultSetText(assay.results) : 'No results yet'}</span></span>,
+      detail: <span className="flex flex-wrap items-center gap-1.5"><StatusBadge status={assay.status} />QC <StatusBadge status={assay.qc_status} />{assay.results?.length ? <ResultSet results={assay.results} /> : <span className="text-muted-foreground">No results yet</span>}</span>,
     })),
     ...sample.storage_events.map(event => ({
       key: `storage-${event.storage_event_id}`,
@@ -86,8 +87,8 @@ export function SampleActivity({ sample }: { sample: SampleDetail }) {
 
   return (
     <section aria-label="Activity" className="rounded-md border bg-card shadow-xs">
-      <div className="flex min-h-9 flex-wrap items-center justify-between gap-2 border-b px-3 py-1.5">
-        <h2 className="text-[13px] font-semibold tracking-tight">Activity</h2>
+      <div className={cn(panelHeaderClass(true), 'flex-wrap')}>
+        <h2 className={sectionTitleClass}>Activity</h2>
         <div role="group" aria-label="Show activity" className="flex flex-wrap gap-0.5">
           <button type="button" aria-pressed={kind === 'all'} onClick={() => setKind('all')} className={filterClass}>All <span className="tabular-nums opacity-70">{items.length}</span></button>
           {KINDS.map(option => (

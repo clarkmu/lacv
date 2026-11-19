@@ -15,6 +15,27 @@ def tidy_long_text(value):
         return value
     return value.strip() or None
 
+
+# Coordinates are decimal degrees (WGS 84). These checks are shared by the API and the batch workbook import.
+COORDINATE_RANGES = {"latitude": (Decimal(-90), Decimal(90)), "longitude": (Decimal(-180), Decimal(180))}
+
+
+def coordinate_problem(name: str, value: Decimal | None) -> str | None:
+    """Why a latitude or longitude is out of range, or None when it is fine (or not given)."""
+    if value is None:
+        return None
+    low, high = COORDINATE_RANGES[name]
+    if not value.is_finite() or value < low or value > high:
+        return f"{name.capitalize()} must be between {low} and {high} decimal degrees, not {value.normalize():f}" if value.is_finite() else f"{name.capitalize()} must be a number of decimal degrees"
+    return None
+
+
+def check_coordinate(value, info):
+    problem = coordinate_problem(info.field_name, value)
+    if problem:
+        raise ValueError(problem)
+    return value
+
 class BatchBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     batch_id: int
@@ -46,6 +67,8 @@ class SampleListItem(SampleRef):
     quantity_unit: str | None = None
     storage_location_id: int | None = None
     legacy_codes: list[str] = []
+    # The shipping batch this Sample arrived in (root Samples only; derived Samples have none).
+    batch: BatchBrief | None = None
 
 class BatchSampleRow(BaseModel):
     """A root Sample as the Batch page lists and edits it."""
@@ -92,26 +115,85 @@ class BatchSamplesUpdate(BaseModel):
     operator_name: str | None = Field(default=None, max_length=150)
     change_notes: str | None = None
 
+def as_text(value):
+    """Numbers and dates sent for a spreadsheet cell, as the text the importer parses (app/batch_import.py)."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
 class BatchSampleImportRow(BaseModel):
-    """One root Sample in a shipping batch. sample_type names a sample type lookup entry."""
-    sample_code: str
+    """One root Sample of a shipping batch as typed in the workbook or on the confirm page. Values stay text here:
+    app/batch_import.py checks and converts them, the same way for the preview and for saving."""
+    sample_code: str | None = None
     subject_code: str | None = None
     external_sample_id: str | None = None
-    aliquot_number: int | None = Field(default=None, ge=1)
+    aliquot_number: str | None = None
     sample_type: str | None = None
     source_type: str | None = None
     source_description: str | None = None
-    collection_date: datetime | None = None
-    received_date: datetime | None = None
-    status: str = "expected"
+    collection_date: str | None = None
+    received_date: str | None = None
+    status: str | None = None
+    latitude: str | None = None
+    longitude: str | None = None
     notes: str | None = None
 
+    _as_text = field_validator(
+        "sample_code", "subject_code", "external_sample_id", "aliquot_number", "sample_type", "source_type", "source_description",
+        "collection_date", "received_date", "status", "latitude", "longitude", "notes", mode="before",
+    )(as_text)
+
+class ImportCellProblem(BaseModel):
+    """What is wrong with one cell: its column, the value found (None when blank), and a message saying what to enter."""
+    column: str
+    value: str | None = None
+    message: str
+
+class BatchSampleImportPreviewRow(BatchSampleImportRow):
+    # The workbook row it came from (row 1 is the header).
+    row_number: int
+    problems: list[ImportCellProblem] = []
+
 class BatchSampleImportPreview(BaseModel):
-    samples: list[BatchSampleImportRow]
+    """What a workbook would create. Nothing is saved."""
+    file_name: str
+    samples: list[BatchSampleImportPreviewRow] = []
+    # Problems with the file itself (each names its sheet and row); they block the import. Row problems are on the rows.
+    problems: list[str] = []
+    # Things the user should know that do not block the import, such as columns that will be ignored.
+    warnings: list[str] = []
+    can_import: bool
 
 class BatchSampleImportCreate(BaseModel):
-    batch_name: str
-    samples: list[BatchSampleImportRow]
+    batch_name: str = Field(min_length=1, max_length=255)
+    samples: list[BatchSampleImportRow] = Field(min_length=1, max_length=2000)
+
+    _tidy = field_validator("batch_name", mode="before")(tidy_text)
+
+class TemplateColumnDoc(BaseModel):
+    name: str
+    # As written in the template: required columns end in " *".
+    header: str
+    required: bool
+    description: str
+    format: str
+    example: str
+    # False for optional columns the importer accepts that the template leaves out.
+    in_template: bool = True
+
+class TemplateSheetDoc(BaseModel):
+    name: str
+    description: str
+    columns: list[TemplateColumnDoc]
+
+class TemplateDoc(BaseModel):
+    """An import template's documentation, generated from the same column list the importer reads."""
+    title: str
+    file_name: str
+    sheets: list[TemplateSheetDoc]
+    notes: list[str] = []
 
 class SampleTypeBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -154,6 +236,10 @@ class SampleFields(BaseModel):
     is_disposed: bool = False
     expiration_date: datetime | None = None
     notes: str | None = None
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+
+    _coordinates = field_validator("latitude", "longitude")(check_coordinate)
 
 class SampleCreate(SampleFields):
     sample_code: str = Field(min_length=1, max_length=100)
@@ -196,9 +282,21 @@ class SampleUpdate(BaseModel):
     is_disposed: bool | None = None
     expiration_date: datetime | None = None
     notes: str | None = None
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
     # Recorded on the storage or quantity event this edit creates, not on the Sample.
     operator_name: str | None = None
     change_notes: str | None = None
+
+    _coordinates = field_validator("latitude", "longitude")(check_coordinate)
+
+    @field_validator("sample_code", "status", "is_consumed", "is_disposed")
+    @classmethod
+    def required_fields_cannot_be_cleared(cls, value, info):
+        # Leaving these out changes nothing; sending them blank would erase a value every Sample must have.
+        if value is None:
+            raise ValueError(f"{info.field_name.replace('_', ' ').capitalize()} cannot be blank")
+        return value
 
 class LegacyIdentifier(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -312,6 +410,8 @@ class SampleDetail(SampleListItem):
     is_disposed: bool = False
     expiration_date: datetime | None = None
     notes: str | None = None
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
     batch: BatchBrief | None = None
     parent: SampleRef | None = None
     children: list[SampleRef] = []
@@ -332,12 +432,31 @@ class LineageGeneratedBy(BaseModel):
 
 class SampleLineageNode(SampleRef):
     generated_by: LineageGeneratedBy | None = None
+    # How much of this Sample remains, from its own quantity ledger: the same summary as the Sample page.
+    availability: "SampleAvailability"
     children: list["SampleLineageNode"] = []
 
 class SampleLineage(BaseModel):
     sample: SampleRef
     ancestors: list[SampleRef]
     descendants: list[SampleLineageNode]
+
+class LocatedSample(SampleRef):
+    sample_type_id: int | None = None
+    subject_code: str | None = None
+    collection_date: datetime | None = None
+
+class SampleSite(BaseModel):
+    """One collection point on the map, with every Sample recorded at exactly these coordinates."""
+    latitude: Decimal
+    longitude: Decimal
+    samples: list[LocatedSample]
+
+class SampleMap(BaseModel):
+    sites: list[SampleSite]
+    # Samples with both coordinates (plotted), and Samples missing one or both (not plotted).
+    located_count: int
+    unlocated_count: int
 
 class ProcessTypeBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -672,3 +791,4 @@ AssaySummary.model_rebuild()
 AssayDefinitionFields.model_rebuild()
 AssayDefinitionCreate.model_rebuild()
 SampleDetail.model_rebuild()
+SampleLineageNode.model_rebuild()

@@ -176,3 +176,32 @@ def test_quantity_first_measured_after_creation_starts_the_accounting():
     result = availability(Decimal("30"), "uL", [event("40", None, "40"), event("-10", "40", "30")])
 
     assert (result["state"], result["starting_quantity"], result["removed_quantity"], result["percent_remaining"]) == ("tracked", Decimal("40"), Decimal("10"), 75.0)
+
+
+def test_lineage_shows_each_descendants_own_availability_as_the_sample_page_does(client):
+    root = create_root(client, "LIN-001", current_quantity="100", quantity_unit="uL")
+    used = client.post(f"/samples/{root['sample_id']}/children", json={"sample_code": "LIN-001-A", "current_quantity": "40", "quantity_unit": "uL"}).json()
+    client.post(f"/samples/{used['sample_id']}/children", json={"sample_code": "LIN-001-A1", "current_quantity": "10", "quantity_unit": "uL", "quantity_taken_from_parent": "10"})
+    emptied = client.post(f"/samples/{root['sample_id']}/children", json={"sample_code": "LIN-001-B", "current_quantity": "5", "quantity_unit": "mL"}).json()
+    client.patch(f"/samples/{emptied['sample_id']}", json={"current_quantity": 0})
+    client.post(f"/samples/{root['sample_id']}/children", json={"sample_code": "LIN-001-C"})
+    client.post(f"/samples/{root['sample_id']}/children", json={"sample_code": "LIN-001-D", "current_quantity": "3"})
+
+    lineage = client.get(f"/samples/{root['sample_id']}/lineage").json()
+    nodes = {}
+    stack = list(lineage["descendants"])
+    while stack:
+        node = stack.pop()
+        nodes[node["sample_code"]] = node
+        stack.extend(node["children"])
+
+    assert summary(nodes["LIN-001-A"]["availability"]) == ("tracked", "40.000000", "30.000000", "10.000000", 75.0)
+    assert summary(nodes["LIN-001-A1"]["availability"]) == ("tracked", "10.000000", "10.000000", "0", 100.0)
+    # Fully used, in its own unit (mL): nothing remains.
+    assert summary(nodes["LIN-001-B"]["availability"]) == ("tracked", "5.000000", "0.000000", "5.000000", 0.0)
+    assert nodes["LIN-001-B"]["availability"]["unit"] == "mL"
+    # No quantity, or a quantity without a unit: no percentage is implied.
+    assert nodes["LIN-001-C"]["availability"]["state"] == "not_recorded"
+    assert (nodes["LIN-001-D"]["availability"]["state"], nodes["LIN-001-D"]["availability"]["percent_remaining"]) == ("no_unit", None)
+    for code, node in nodes.items():
+        assert node["availability"] == availability_of(client, node["sample_id"]), code

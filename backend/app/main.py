@@ -1,7 +1,9 @@
 from fastapi import FastAPI
+from .errors import install_error_handlers
 from .routers import assay_definitions, assay_executions, batches, process_events, sample_types, samples, storage_locations
 
 app = FastAPI(title="LACV API", version="0.1.0", root_path="/api")
+install_error_handlers(app)
 
 @app.get("/health")
 def health():

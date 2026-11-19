@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { api } from '../../api'
-import { Panel } from '../common'
+import { Panel, subsectionLabelClass } from '../common'
 import { toDateTimeInput } from '../../format'
 import type { SampleDetail } from '../../types'
 
@@ -46,6 +47,8 @@ const groups: { title: string; fields: Field[] }[] = [
       { key: 'collection_date', label: 'Collected', kind: 'datetime' },
       { key: 'received_date', label: 'Received', kind: 'datetime' },
       { key: 'expiration_date', label: 'Expires', kind: 'datetime' },
+      { key: 'latitude', label: 'Latitude', kind: 'number' },
+      { key: 'longitude', label: 'Longitude', kind: 'number' },
     ],
   },
   { title: 'Notes', fields: [{ key: 'notes', label: 'Notes', kind: 'textarea' }] },
@@ -123,7 +126,7 @@ export function SampleProperties({ sample }: { sample: SampleDetail }) {
     <Panel title="Properties" action={<span className="text-[11px] text-muted-foreground">Enter saves · Esc cancels</span>} bodyClassName="p-0">
       {groups.map(group => (
         <div key={group.title} className="border-b px-3 py-2 last:border-b-0">
-          <h3 className="mb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{group.title}</h3>
+          <h3 className={cn('mb-1', subsectionLabelClass)}>{group.title}</h3>
           {group.fields.map(field => (
             <div key={field.key} className={cn('grid items-center gap-2', field.kind === 'textarea' ? 'grid-cols-1' : 'grid-cols-[8.5rem_minmax(0,1fr)]')}>
               <label htmlFor={`field-${field.key}`} className={cn('text-[13px] text-muted-foreground', field.kind === 'textarea' && 'sr-only')}>
@@ -132,11 +135,22 @@ export function SampleProperties({ sample }: { sample: SampleDetail }) {
               {control(field)}
             </div>
           ))}
+          {group.title === 'Source and dates' && <CoordinatesNote sample={sample} />}
         </div>
       ))}
       {save.error && <p role="alert" className="mx-3 mb-3 rounded-md border border-destructive/25 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">{save.error.message}</p>}
     </Panel>
   )
+}
+
+/** Coordinates are optional; say when one is missing, since the map needs both. */
+function CoordinatesNote({ sample }: { sample: SampleDetail }) {
+  const hasLatitude = sample.latitude != null
+  const hasLongitude = sample.longitude != null
+  if (hasLatitude === hasLongitude) {
+    return <p className="mt-0.5 pl-[9rem] text-[11px] text-muted-foreground">Decimal degrees.{hasLatitude && <> <Link className="text-primary hover:underline" to="/samples/map">Show on map</Link></>}</p>
+  }
+  return <p role="note" className="mt-0.5 pl-[9rem] text-[11px] text-amber-800">Enter the {hasLatitude ? 'longitude' : 'latitude'} too; the map shows samples with both.</p>
 }
 
 function initialDraft(sample: SampleDetail): Record<string, string> {

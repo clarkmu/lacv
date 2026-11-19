@@ -4,10 +4,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FileText, FlaskConical } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '../api'
-import { executionHref, resultSetText } from '../assayResults'
-import { errorClass, inputClass, Panel, SecondaryCode, StatusBadge } from '../components/common'
+import { executionHref } from '../assayResults'
+import { ResultSet } from '../components/assay/ResultSet'
+import { EmptyValue, errorClass, hasPositiveResult, inputClass, Panel, positiveRowCellClass, SecondaryCode, StatusBadge, NotLoaded } from '../components/common'
 import { SampleActivity } from '../components/sample/SampleActivity'
 import { SampleIdentity } from '../components/sample/SampleIdentity'
 import { SampleLineage } from '../components/sample/SampleLineage'
@@ -29,7 +31,7 @@ export function SamplePage() {
   })
 
   if (query.isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading sample…</p>
-  if (!query.data) return <p className="py-6 text-sm text-muted-foreground">Sample not found.</p>
+  if (!query.data) return <NotLoaded error={query.error} what="Sample" />
   const sample = query.data
 
   return (
@@ -71,6 +73,7 @@ export function SamplePage() {
 function SampleAssays({ sample }: { sample: SampleDetail }) {
   return (
     <Panel
+      primary
       title="Assays"
       bodyClassName="p-0"
       action={<Button asChild variant="ghost" size="sm" className="h-7 text-primary hover:text-primary"><Link to={`/sample/${sample.sample_id}/assays/new`}><FlaskConical aria-hidden="true" />Record assay</Link></Button>}
@@ -84,11 +87,12 @@ function SampleAssays({ sample }: { sample: SampleDetail }) {
         <CompactTable
           head={['Execution', 'Assay', 'Results', 'Date', 'Status', 'QC', 'Samples']}
           numericColumns={[6]}
+          flaggedRows={sample.assays.flatMap((assay, index) => (hasPositiveResult((assay.results ?? []).map(result => result.interpretation)) ? [index] : []))}
           rows={sample.assays.map(assay => [
             <Link key="code" className="font-mono font-medium text-primary hover:underline" to={executionHref(assay)}>{assay.execution_name}</Link>,
             <Link key="assay" className="hover:text-primary hover:underline" to={`/assays/${assay.assay_definition_id}`}>{assay.assay_name}</Link>,
-            assay.results?.length ? <span key="result" className="tabular-nums">{resultSetText(assay.results)}</span> : <span key="result" className="text-muted-foreground">not entered</span>,
-            <span key="date" className="text-muted-foreground tabular-nums">{formatDateTime(assay.assay_date)}</span>,
+            assay.results?.length ? <ResultSet key="result" results={assay.results} /> : null,
+            assay.assay_date ? <span key="date" className="text-muted-foreground tabular-nums">{formatDateTime(assay.assay_date)}</span> : null,
             <StatusBadge key="status" status={assay.status} />, <StatusBadge key="qc" status={assay.qc_status} />, assay.sample_count ?? 1,
           ])}
         />
@@ -139,7 +143,8 @@ function DataFiles({ sample }: { sample: SampleDetail }) {
   )
 }
 
-function CompactTable({ head, rows, numericColumns = [] }: { head: string[]; rows: ReactNode[][]; numericColumns?: number[] }) {
+/** A small read-only table. Absent cells (null, undefined or blank) show the muted em dash; flaggedRows get the positive-result flag. */
+function CompactTable({ head, rows, numericColumns = [], flaggedRows = [] }: { head: string[]; rows: ReactNode[][]; numericColumns?: number[]; flaggedRows?: number[] }) {
   return (
     <Table className="text-[13px]">
       <TableHeader>
@@ -149,8 +154,16 @@ function CompactTable({ head, rows, numericColumns = [] }: { head: string[]; row
       </TableHeader>
       <TableBody>
         {rows.map((row, rowIndex) => (
-          <TableRow key={rowIndex} className="hover:bg-accent/50">
-            {row.map((cell, index) => <TableCell key={index} className={`px-3 py-1.5 ${numericColumns.includes(index) ? 'text-right tabular-nums' : ''}`}>{cell}</TableCell>)}
+          <TableRow key={rowIndex} className="hover:bg-accent/50" data-positive={flaggedRows.includes(rowIndex) || undefined}>
+            {row.map((cell, index) => (
+              <TableCell
+                key={index}
+                title={index === 0 && flaggedRows.includes(rowIndex) ? 'Positive result' : undefined}
+                className={cn('px-3 py-1.5', numericColumns.includes(index) && 'text-right tabular-nums', index === 0 && flaggedRows.includes(rowIndex) && positiveRowCellClass)}
+              >
+                {cell === null || cell === undefined || cell === '' ? <EmptyValue /> : cell}
+              </TableCell>
+            ))}
           </TableRow>
         ))}
       </TableBody>

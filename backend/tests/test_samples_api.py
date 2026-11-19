@@ -120,8 +120,11 @@ def test_batch_import_creates_root_samples_with_lookup_types(client):
     assert codes == {"MQ-1": "CSF", "MQ-2": "Whole blood"}
 
     unknown = client.post("/batches/sample-import", json={"batch_name": "Bad", "samples": [{"sample_code": "MQ-3", "sample_type": "mosquito"}]})
-    assert unknown.status_code == 400
-    assert "Unknown sample type: mosquito" in unknown.json()["detail"]
+    assert unknown.status_code == 422
+    [problem] = unknown.json()["detail"]
+    # Located at the cell, so the confirm page can mark it; the message names the value and the types that exist.
+    assert problem["loc"] == ["body", "samples", 0, "sample_type"]
+    assert problem["msg"].startswith('"mosquito" is not a sample type in LACV; use one of: ') and "CSF" in problem["msg"]
     assert client.get("/samples/lookup", params={"code": "MQ-3"}).status_code == 404
 
 
@@ -313,3 +316,18 @@ def test_root_only_list_excludes_derived_samples(client):
     # The base-samples filter is for lists only: a derived Sample still opens by code or id.
     assert lookup(client, "BASE-001-A")["sample_id"] == child["sample_id"]
     assert client.get(f"/samples/{child['sample_id']}").status_code == 200
+
+
+def test_the_sample_list_names_each_samples_batch(client):
+    rows = client.get("/samples").json()
+    batched = [row for row in rows if row["batch_id"] is not None]
+
+    assert batched, "the seed has batched root samples"
+    for row in batched:
+        assert row["batch"]["batch_id"] == row["batch_id"]
+        assert row["batch"]["batch_code"] and row["batch"]["batch_name"]
+    # Derived Samples belong to no batch; nothing is inferred from their root.
+    assert all(row["batch"] is None for row in rows if row["parent_sample_id"] is not None)
+    root = create_root(client, "LOOSE-1")
+    assert next(row for row in client.get("/samples").json() if row["sample_code"] == "LOOSE-1")["batch"] is None
+    assert root["batch"] is None

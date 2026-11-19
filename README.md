@@ -16,6 +16,7 @@ LACV is not intended to recreate a full commercial LIMS such as Senaite or Bench
 - Tracks each Sample's current storage location plus its storage movement and quantity history.
 - Shows how much of each Sample remains: starting quantity minus removals from that Sample (process and aliquot inputs, amounts taken to create a child, volume used by assay executions, downward adjustments), from the Sample's own quantity ledger. Using a child never gives quantity back to its parent. If the ledger does not chain from the starting quantity to the current one, or mixes incompatible units, the Sample page says so and shows no percentage.
 - Attaches data file references to Samples and assay executions.
+- Records where a Sample was collected, as optional latitude and longitude (decimal degrees, WGS 84), and shows geolocated Samples on a map (`/samples/map`) as collection sites and as a density heatmap. Coordinates are never inferred or copied from a parent.
 - Groups root Samples into shipping batches and imports them from `.xlsx` files through a preview-and-confirm workflow. Derived Samples never belong to a batch. The Batch page edits its Samples as a table, row by row or several rows at once, and saves all changes or none.
 - Makes the Sample page the central workspace: editable fields, parent and children, the lineage tree, the Sample's own processes and assays, storage and quantity history, files, and legacy identifiers.
 - Finds a Sample by its code or by a legacy Material code printed on an older label.
@@ -41,6 +42,8 @@ Assay definition (reusable procedure: type, target, kit, instrument, typical vol
        └─ Sample (once per execution) ──> its result set: per field, a value, interpretation and QC
 ```
 
+`latitude` and `longitude` (`NUMERIC(9,6)`, migration `20261119_0009`) are optional and independent: the database keeps them on the globe (-90 to 90, -180 to 180), and the map plots only Samples that have both.
+
 An assay definition (`assay_definitions`) is the procedure, defined once; its result fields are `assay_definition_results` (analyte, result name, unit, value type). An execution (`assay_executions`) is one run of it: `assay_execution_id` is its identity, and `execution_name` (generated as `<assay code>-NNN`, unique within the assay) is an editable label. Its Samples are rows of `assay_execution_samples`, unique per execution and Sample. A Sample's result set in an execution is its `assay_execution_results` rows, at most one per result field, each with `numeric_value` or `text_value`, `interpretation` and `qc_status`; a field with nothing entered has no row, so a Sample can join an execution before the assay is done. A QC-accepted value is locked until its QC is reopened. A Sample can take part in any number of executions, including several of the same assay. Volume used is that Sample's quantity-ledger row linked to the execution; data files and derived Samples belong to the execution. Migration `20261103_0007` converted one-Sample executions into this shape; `20261104_0008` restored the assays' result fields and each result's interpretation and QC, reading back what 0007 had kept in notes.
 
 `subject_code` is the study subject (participant) a Sample came from: a plain identifier, not a subject registry. `aliquot_number` tells apart the tubes received for one subject's collection of one Material (sample type); within a batch, two such tubes cannot share a number.
@@ -63,7 +66,7 @@ Earlier versions kept a separate `materials` table alongside `samples`. Alembic 
 
 ## Stack
 
-- Frontend: React, TypeScript, Vite, Tailwind CSS, TanStack Query
+- Frontend: React, TypeScript, Vite, Tailwind CSS, TanStack Query; Leaflet with OpenStreetMap tiles (no API key) and leaflet.heat for the sample map
 - Routing: React Router
 - Backend: FastAPI, SQLAlchemy, Pydantic, Alembic, psycopg
 - Database: PostgreSQL 17
@@ -167,9 +170,13 @@ The React application is a static browser application, so there is no frontend-s
 
 ## Current UI Scope
 
-- Batch list with sample counts, sample batch template download, and `.xlsx` import confirmation of root samples.
-- Sample list with filtering, sorting, and open-by-code (including legacy Material codes).
-- Sample workspace: inline field editing (Enter or leaving a field saves, Esc cancels), lineage tree, child samples, process history, assays, storage and quantity history, files, and legacy identifiers.
+- Batch list with sample counts, sample batch template download, and `.xlsx` import confirmation of root samples. The confirm page lists every row with its workbook row number; each problem (an unreadable date, an unknown sample type, a code already in use, a repeated aliquot number, a coordinate out of range, ...) sits on its cell and says what to enter. Cells can be fixed or rows removed in place; saving checks every row again and saves all of them or none. A workbook that cannot be used at all stays on the Batches page with its problems listed.
+- Template downloads (sample batch, and each assay's execution workbook) first open a column guide: each column's name, whether it is required, what it means, its format and an example. The guide is served by the backend from the same column list the importer reads (`app/batch_import.py`, `app/execution_import.py`), so it cannot drift from what an upload is checked against. Required columns are marked `*` in the template's header (e.g. `sample_code *`); headers are read with or without the marker, so older workbooks still import.
+- Sample list with filtering, sorting, and open-by-code (including legacy Material codes). Batch is the first column: by default each batch's Samples are listed together (newest batch first, codes in natural order, Samples with no batch last), the batch code is shown on the first row of each run and left blank while the next rows belong to the same batch. A blank always means "same batch as the row above": after a sort that interleaves batches, the code is shown again wherever a new run starts, and a Sample with no batch shows a dash on every row. The Parent column appears when derived samples are listed ("Base samples only" off). Legacy Material codes are not a column, but the filter still finds a Sample by one.
+- Sample map: collection sites (Samples at exactly the same point share one numbered marker whose popup links to each Sample), a density heatmap weighted by sample count, and a site list. It opens over Asheville, wide enough to include Pigeon Forge. Samples without both coordinates are counted, not plotted.
+- Results menu in the top bar: qPCR results and Sequencing results open the Assays list narrowed to that assay type (`/assays?type=qPCR`); results themselves stay on each assay's page.
+- Assay interpretations (positive, negative, detected, not detected, inconclusive, in any case) show as badges with a symbol (+, −, ?) as well as colour; the stored text is shown unchanged.
+- Sample workspace: inline field editing (Enter or leaving a field saves, Esc cancels), lineage tree, child samples, process history, assays, storage and quantity history, files, and legacy identifiers. Each derived Sample in the lineage tree shows what remains of it (remaining of starting quantity, a small bar and a percentage), from the same backend calculation as the Sample's own availability; no bar or percentage is shown when the quantity is unrecorded, has no unit or its history does not reconcile.
 - Sample actions: create root sample, add child sample, aliquot, record a process (homogenization, RNA extraction, reverse transcription, library preparation, other), record an assay, delete when nothing depends on the sample.
 - Assays: the list of reusable assay definitions and creating one.
 - The assay's page is its workspace: the procedure (read-only), a mean per numeric result field (blank and text values counted, never averaged), and every execution grouped by its ID, with one row per Sample and a value, interpretation and QC column for each result field, edited in place. Executions can be filtered, renamed, have their details edited, gain or lose Samples (a Sample whose volume was used stays). Links to an execution from elsewhere open `/assays/<id>#execution-<execution id>`.
@@ -189,7 +196,7 @@ The development stack contains:
 | Piece | Development behavior |
 | --- | --- |
 | Gateway | HTTPS on `127.0.0.1:8443` |
-| Frontend | Vite dev server with source mounted from `frontend/` |
+| Frontend | Vite dev server with source mounted from `frontend/`; `frontend/scripts/dev-server.sh` installs dependencies whenever `package.json` or `package-lock.json` changes, also while the stack is running, and restarts Vite |
 | Backend | Uvicorn with `--reload`, with source mounted from `backend/` |
 | Database | Separate PostgreSQL 17 development volume, `lacv_dev_postgres` |
 
@@ -334,3 +341,4 @@ PGHOST=127.0.0.1 PGPORT=15432 PGUSER=lims conda run -n lacv deploy/tests/test_de
 - Keep business logic in FastAPI and persistence in SQLAlchemy.
 - Keep the frontend focused on rendering data, editing fields, and calling APIs.
 - Prefer dense, practical laboratory workflows over dashboard or marketing-style UI.
+- Errors are written for the person at the bench: what is wrong, where (sheet, row, column), the value found and what to enter. Validation errors keep FastAPI's `{loc, msg, type}` shape with plain-language messages (`app/errors.py`). An unexpected server error is logged in full on the `lacv` logger with a short reference, and the user sees only a sentence with that reference (`docker compose logs backend | grep <reference>` finds it).

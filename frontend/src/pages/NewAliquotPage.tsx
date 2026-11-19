@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { formatQuantity } from '../format'
-import { SampleLink } from '../components/common'
+import { SampleLink, NotLoaded } from '../components/common'
 
 const inputClass = 'mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm'
 
@@ -38,7 +38,7 @@ export function NewAliquotPage() {
   }
 
   if (parent.isLoading) return <p>Loading sample…</p>
-  if (!parent.data) return <p>Sample not found.</p>
+  if (!parent.data) return <NotLoaded error={parent.error} what="Sample" />
   const prefix = values.sample_code_prefix || parent.data.sample_code
 
   return (

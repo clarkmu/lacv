@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { SampleLink } from '../components/common'
+import { SampleLink, NotLoaded } from '../components/common'
 
 const inputClass = 'mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm'
 
@@ -53,7 +53,7 @@ export function NewProcessPage() {
   }
 
   if (input.isLoading) return <p>Loading sample…</p>
-  if (!input.data) return <p>Sample not found.</p>
+  if (!input.data) return <NotLoaded error={input.error} what="Sample" />
 
   return (
     <form onSubmit={submit} className="max-w-3xl rounded border border-slate-200 bg-white p-4">

@@ -3,7 +3,7 @@ import { CornerUpLeft, Refrigerator, Sprout } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { executionHref } from '../../assayResults'
 import { cn } from '@/lib/utils'
-import { QuantityValue, SampleLink } from '../common'
+import { QuantityValue, SampleLink, subsectionLabelClass } from '../common'
 import { availabilityTitle, SampleAvailability } from './SampleAvailability'
 import type { SampleDetail } from '../../types'
 
@@ -63,7 +63,7 @@ export function SpecimenState({ sample }: { sample: SampleDetail }) {
 function Cell({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   return (
     <div className={cn('min-w-0 border-b px-4 py-3 last:border-b-0 sm:border-r xl:border-b-0 xl:last:border-r-0', className)}>
-      <h2 className="mb-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{label}</h2>
+      <h2 className={cn('mb-1.5', subsectionLabelClass)}>{label}</h2>
       {children}
     </div>
   )

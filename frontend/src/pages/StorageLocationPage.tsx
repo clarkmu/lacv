@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { api, ApiError } from '../api'
 import { ListTable, type ListTableColumn } from '../components/ListTable'
-import { inputClass, Panel, QuantityValue, SampleLink, SampleTypeLabel, SecondaryCode, StatusBadge } from '../components/common'
+import { inputClass, Panel, panelHeaderClass, QuantityValue, SampleLink, SampleTypeLabel, SecondaryCode, sectionTitleClass, StatusBadge, NotLoaded } from '../components/common'
 import { distinct, Field } from '../components/form'
 import { SuggestInput } from '../components/SuggestInput'
 import { formatDateTime } from '../format'
@@ -22,7 +22,7 @@ export function StorageLocationPage() {
   const { id = '' } = useParams()
   const query = useQuery({ queryKey: ['storage-location', id], queryFn: () => api.getStorageLocation(id) })
   if (query.isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading storage location…</p>
-  if (!query.data) return <p className="py-6 text-sm text-muted-foreground">Storage location not found.</p>
+  if (!query.data) return <NotLoaded error={query.error} what="Storage location" />
   return <LocationView key={query.data.storage_location_id} location={query.data} />
 }
 
@@ -146,7 +146,7 @@ function LocationEditor({ location, onDone }: { location: StorageLocationDetail;
 
   return (
     <form onSubmit={submit} aria-label="Edit location" className="rounded-md border bg-card shadow-xs" onKeyDown={event => { if (event.key === 'Escape') onDone() }}>
-      <div className="flex min-h-9 items-center border-b px-3 py-1.5"><h2 className="text-[13px] font-semibold tracking-tight">Edit location</h2></div>
+      <div className={panelHeaderClass()}><h2 className={sectionTitleClass}>Edit location</h2></div>
       <div className="grid gap-3 p-3 sm:grid-cols-3">
         <Field label="Code" htmlFor="location-code" error={fieldErrors.location_code}>
           <Input id="location-code" required autoFocus value={draft.location_code} onChange={event => set('location_code', event.target.value)} aria-invalid={Boolean(fieldErrors.location_code) || undefined} className="h-8 font-mono text-[13px]" />
@@ -226,20 +226,25 @@ function Contents({ location }: { location: StorageLocationDetail }) {
     })
   }
 
+  const contentsTitle = (
+    <>
+      Contents <span className="font-normal text-muted-foreground tabular-nums">· {rows.length} {rows.length === 1 ? 'sample' : 'samples'}</span>
+      <span className="ml-2 font-normal text-muted-foreground">Each row is one physical tube.</span>
+    </>
+  )
+
   return (
-    <section aria-label="Contents" className="space-y-2">
-      <h2 className="text-[13px] font-semibold tracking-tight">
-        Contents <span className="font-normal text-muted-foreground tabular-nums">· {rows.length} {rows.length === 1 ? 'sample' : 'samples'}</span>
-        <span className="ml-2 font-normal text-muted-foreground">Each row is one physical tube.</span>
-      </h2>
+    <section aria-label="Contents">
       {location.contents.length === 0 ? (
-        <div className="flex flex-col items-center gap-1 rounded-md border border-dashed bg-card px-4 py-8 text-center">
+        <Panel primary title={contentsTitle} label="No contents" bodyClassName="flex flex-col items-center gap-1 px-4 py-8 text-center">
           <PackageOpen aria-hidden="true" className="size-5 text-muted-foreground" />
           <p className="text-sm font-medium">No samples are currently stored in this location.</p>
           <p className="text-xs text-muted-foreground">A sample is placed here by setting its storage location, on the sample's page or a batch.</p>
-        </div>
+        </Panel>
       ) : (
         <ListTable<StoredSample>
+          title={contentsTitle}
+          primary
           rows={rows}
           searchPlaceholder="Filter contents…"
           getRowKey={sample => sample.sample_id}

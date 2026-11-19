@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { buildActivity } from '../components/sample/SampleActivity'
 import { SamplePage } from './SamplePage'
-import type { SampleDetail, SampleLineage } from '../types'
+import type { SampleAvailability, SampleDetail, SampleLineage } from '../types'
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean
@@ -25,7 +25,7 @@ const SAMPLE: SampleDetail = {
   ...ref(2, 'S-001-RNA'), sample_type_id: 3, parent_sample_id: 1, batch_id: null, external_sample_id: 'EXT-9', subject_code: null, aliquot_number: null, label: 'Extracted RNA',
   received_date: null, current_quantity: '15.000000', quantity_unit: 'uL', storage_location_id: 7, legacy_codes: ['MAT-0002'],
   subtype: null, source_type: null, source_description: null, collection_date: null, concentration: '12.500000', concentration_unit: 'ng/uL',
-  is_consumed: false, is_disposed: false, expiration_date: null, notes: null, batch: null,
+  is_consumed: false, is_disposed: false, expiration_date: null, notes: null, latitude: '35.595100', longitude: null, batch: null,
   parent: ref(1, 'S-001'), children: [ref(3, 'S-001-RNA-A')],
   storage_location: { storage_location_id: 7, parent_location_id: null, location_code: 'BOX-7', location_type: 'box', location_name: 'Freezer box 7', is_active: true },
   legacy_identifiers: [], generated_by_assays: [],
@@ -48,7 +48,17 @@ const SAMPLE: SampleDetail = {
 const LINEAGE: SampleLineage = {
   sample: ref(2, 'S-001-RNA'),
   ancestors: [ref(1, 'S-001')],
-  descendants: [{ ...ref(3, 'S-001-RNA-A'), generated_by: { kind: 'process', code: 'ALQ-1', type: 'Aliquoting' }, children: [] }],
+  descendants: [
+    { ...ref(3, 'S-001-RNA-A'), generated_by: { kind: 'process', code: 'ALQ-1', type: 'Aliquoting' }, children: [], availability: availability({ starting_quantity: '10.000000', available_quantity: '7.500000', removed_quantity: '2.500000', percent_remaining: 75 }) },
+    { ...ref(4, 'S-001-RNA-B'), generated_by: null, children: [], availability: availability({ unit: 'mL', starting_quantity: '5.000000', available_quantity: '0.000000', removed_quantity: '5.000000', percent_remaining: 0 }) },
+    { ...ref(5, 'S-001-RNA-C'), generated_by: null, children: [], availability: availability({ state: 'not_recorded', unit: null, available_quantity: null }) },
+    { ...ref(6, 'S-001-RNA-D'), generated_by: null, children: [], availability: availability({ state: 'inconsistent', available_quantity: '4.000000', percent_remaining: null, problems: ['History jumps from 6 to 4 uL'] }) },
+    { ...ref(7, 'S-001-RNA-E'), generated_by: null, children: [], availability: availability({ state: 'no_unit', unit: null, available_quantity: '3.000000', percent_remaining: null }) },
+  ],
+}
+
+function availability(fields: Partial<SampleAvailability>): SampleAvailability {
+  return { state: 'tracked', unit: 'uL', dimension: 'volume', starting_quantity: null, available_quantity: null, removed_quantity: null, added_quantity: '0', percent_remaining: null, problems: [], ...fields }
 }
 
 const requests: { method: string; path: string; body?: unknown }[] = []
@@ -162,4 +172,54 @@ test('editing a property in place saves just that field', async () => {
   await act(async () => label.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
   await waitFor(() => requests.some(request => request.method === 'PATCH'))
   expect(requests.find(request => request.method === 'PATCH')).toEqual({ method: 'PATCH', path: '/api/samples/2', body: { label: 'RNA eluate' } })
+})
+
+test('each derived sample in the lineage shows what remains of it, from the backend summary', () => {
+  const row = (code: string) => [...container.querySelectorAll('[data-testid="lineage-availability"]')].find(cell => cell.parentElement?.textContent?.includes(code))!
+  const partly = row('S-001-RNA-A').querySelector('[role="meter"]')!
+  expect(partly.getAttribute('aria-valuenow')).toBe('75')
+  expect(partly.getAttribute('aria-label')).toBe('Remaining in S-001-RNA-A')
+  expect(row('S-001-RNA-A').textContent).toBe('7.5 / 10 uL75%')
+  // Fully used, in its own unit.
+  expect(row('S-001-RNA-B').querySelector('[role="meter"]')!.getAttribute('aria-valuenow')).toBe('0')
+  expect(row('S-001-RNA-B').textContent).toBe('0 / 5 mLused')
+  // No quantity, a history that does not add up, or no unit: words, and no bar or percentage.
+  expect(row('S-001-RNA-C').textContent).toBe('no quantity recorded')
+  expect(row('S-001-RNA-D').textContent).toContain('history does not reconcile')
+  expect(row('S-001-RNA-E').textContent).toBe('3 no unit')
+  for (const code of ['S-001-RNA-C', 'S-001-RNA-D', 'S-001-RNA-E']) {
+    expect(row(code).querySelector('[role="meter"]'), code).toBeNull()
+    expect(row(code).textContent, code).not.toContain('%')
+  }
+})
+
+test('assay interpretations show as badges with their text and a symbol', () => {
+  const assays = container.querySelector('section[aria-label="Assays"]')!
+  const badge = assays.querySelector('[data-tone="positive"]')!
+  expect(badge.textContent).toBe('+positive')
+  expect(assays.textContent).toContain('LACV CT')
+  expect(assays.textContent).toContain('31.2')
+})
+
+test('latitude and longitude are edited in place and a missing one is pointed out', async () => {
+  expect(container.querySelector<HTMLInputElement>('#field-latitude')!.value).toBe('35.5951')
+  expect(container.querySelector<HTMLInputElement>('#field-longitude')!.value).toBe('')
+  expect(container.textContent).toContain('Enter the longitude too; the map shows samples with both.')
+  const longitude = container.querySelector<HTMLInputElement>('#field-longitude')!
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  await act(async () => {
+    setValue.call(longitude, '-82.5515')
+    longitude.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => longitude.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  await waitFor(() => requests.some(request => request.method === 'PATCH'))
+  expect(requests.find(request => request.method === 'PATCH')!.body).toEqual({ longitude: -82.5515 })
+})
+
+test('the positive assay row is flagged at its left edge, beside its badge', () => {
+  const row = container.querySelector('section[aria-label="Assays"] tbody tr')!
+  expect(row.getAttribute('data-positive')).toBe('true')
+  expect(row.querySelector('td')!.className).toContain('shadow-[inset_3px_0_0_0')
+  expect(row.querySelector('[data-tone="positive"]')!.textContent).toBe('+positive')
+  expect(row.querySelector('[data-result-value]')!.textContent).toBe('31.2 cycles')
 })

@@ -108,6 +108,9 @@ CREATE TABLE samples (
     is_disposed BOOLEAN NOT NULL DEFAULT FALSE,
     expiration_date TIMESTAMP NULL,
     notes TEXT,
+    -- Where the Sample was collected, in decimal degrees (WGS 84). The sample map needs both.
+    latitude NUMERIC(9,6) NULL,
+    longitude NUMERIC(9,6) NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_sample_batch FOREIGN KEY (batch_id) REFERENCES batches(batch_id) ON DELETE SET NULL,
@@ -117,7 +120,9 @@ CREATE TABLE samples (
     -- Shipping batches contain only root/original samples.
     CONSTRAINT ck_sample_batch_root CHECK (parent_sample_id IS NULL OR batch_id IS NULL),
     CONSTRAINT ck_sample_not_own_parent CHECK (parent_sample_id IS NULL OR parent_sample_id <> sample_id),
-    CONSTRAINT ck_sample_aliquot_number CHECK (aliquot_number IS NULL OR aliquot_number > 0)
+    CONSTRAINT ck_sample_aliquot_number CHECK (aliquot_number IS NULL OR aliquot_number > 0),
+    CONSTRAINT ck_sample_latitude CHECK (latitude IS NULL OR (latitude >= -90 AND latitude <= 90)),
+    CONSTRAINT ck_sample_longitude CHECK (longitude IS NULL OR (longitude >= -180 AND longitude <= 180))
 );
 CREATE INDEX idx_sample_batch ON samples(batch_id);
 CREATE INDEX idx_sample_parent ON samples(parent_sample_id);
@@ -366,4 +371,4 @@ CREATE TABLE alembic_version (
     version_num VARCHAR(32) NOT NULL,
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
-INSERT INTO alembic_version (version_num) VALUES ('20261104_0008');
+INSERT INTO alembic_version (version_num) VALUES ('20261119_0009');

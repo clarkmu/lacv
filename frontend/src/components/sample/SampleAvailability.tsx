@@ -68,3 +68,46 @@ export function SampleAvailability({ availability }: { availability: Availabilit
     </div>
   )
 }
+
+/**
+ * One line of the same summary, for lists such as the lineage tree: remaining of starting quantity with a small bar.
+ * A bar appears only when the backend gives a percentage; otherwise the reason is said in words.
+ */
+export function CompactAvailability({ availability, sampleCode }: { availability: Availability; sampleCode: string }) {
+  const { state, unit, available_quantity: available, starting_quantity: starting, percent_remaining: percent } = availability
+  const number = (value: string | null) => formatQuantity(value, null)
+
+  if (state === 'not_recorded') return <span className="text-xs text-muted-foreground/80">no quantity recorded</span>
+  if (state === 'no_unit') return <span className="text-xs text-muted-foreground" title="No unit is recorded, so no percentage is shown">{number(available)} <span className="italic">no unit</span></span>
+  if (state === 'unit_mismatch' || state === 'inconsistent') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-amber-800" title={availability.problems.join(' ')}>
+        <TriangleAlert aria-hidden="true" className="size-3" />
+        {formatQuantity(available, unit)} <span className="sr-only">:</span><span>history does not reconcile</span>
+      </span>
+    )
+  }
+  if (percent === null) return <span className="text-xs text-muted-foreground tabular-nums">{formatQuantity(available, unit)}</span>
+
+  const shown = Math.min(Math.max(percent, 0), 100)
+  const depleted = Number(available) === 0
+  return (
+    <span className="inline-flex items-center gap-2 text-xs tabular-nums">
+      <span
+        role="meter"
+        aria-label={`Remaining in ${sampleCode}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={shown}
+        aria-valuetext={`${formatQuantity(available, unit)} of ${formatQuantity(starting, unit)} remaining (${percent}%)`}
+        className="h-1.5 w-16 overflow-hidden rounded-full bg-secondary ring-1 ring-border ring-inset"
+      >
+        <span className={cn('block h-full rounded-full', shown <= 10 ? 'bg-amber-500' : 'bg-primary')} style={{ width: `${shown}%` }} />
+      </span>
+      <span className={cn(depleted ? 'text-muted-foreground' : 'text-foreground')}>
+        <span className="font-medium">{number(available)}</span><span className="text-muted-foreground"> / {number(starting)} {unit}</span>
+      </span>
+      <span className={cn('w-9 text-right', depleted ? 'font-medium text-muted-foreground' : 'text-muted-foreground')}>{depleted ? 'used' : `${percent}%`}</span>
+    </span>
+  )
+}

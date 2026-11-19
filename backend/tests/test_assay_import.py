@@ -217,8 +217,45 @@ def test_the_template_is_for_this_assay_and_reads_back(client):
 
     assert response.headers["content-type"] == XLSX
     assert "plate-qpcr-execution.xlsx" in response.headers["content-disposition"]
+    # Required columns are marked "*"; the importer reads the header with or without the marker.
     assert [cell.value for cell in book["Samples"][1]] == [
-        "sample_code", "LACV CT", "LACV CT interpretation", "RNase P CT", "RNase P CT interpretation", "volume_used", "volume_unit",
+        "sample_code *", "LACV CT", "LACV CT interpretation", "RNase P CT", "RNase P CT interpretation", "volume_used", "volume_unit",
     ]
     assert "LACV CT (cycles), RNase P CT (cycles)" in book["Execution"]["B5"].value
     assert preview(client, assay["assay_definition_id"], response.content).json()["problems"] == ["Samples sheet: no sample rows"]
+
+
+def test_template_documentation_matches_what_the_import_reads(client):
+    assay = definition(client)
+    template = load_workbook(BytesIO(client.get(f"/assay-definitions/{assay['assay_definition_id']}/executions/import-template").content))
+    docs = client.get(f"/assay-definitions/{assay['assay_definition_id']}/executions/import-template/columns").json()
+    samples_doc, execution_doc = docs["sheets"]
+
+    assert (samples_doc["name"], execution_doc["name"]) == ("Samples", "Execution")
+    assert [cell.value for cell in template["Samples"][1]] == [column["header"] for column in samples_doc["columns"] if column["in_template"]]
+    assert [column["name"] for column in samples_doc["columns"] if column["required"]] == ["sample_code"]
+    assert [column["name"] for column in execution_doc["columns"]] == ["execution_name", "assay_date", "operator_name", "notes"]
+    assert [row[0].value for row in template["Execution"].iter_rows(min_row=2)] == [column["name"] for column in execution_doc["columns"]]
+    assert docs["file_name"] == "plate-qpcr-execution.xlsx" and any("* are required" in note for note in docs["notes"])
+
+    # A row of every documented example (including the optional qc_status columns the template leaves out) imports cleanly.
+    create_root(client, "LACV-2026-0042-RNA", current_quantity=50, quantity_unit="uL")
+    columns = samples_doc["columns"]
+    content = workbook([[column["header"] for column in columns], [column["example"] for column in columns]],
+                       [[column["name"], column["example"]] for column in execution_doc["columns"]])
+    shown = preview(client, assay["assay_definition_id"], content).json()
+    assert shown["problems"] == [] and shown["can_import"]
+    [row] = shown["rows"]
+    assert row["match"] == "exact" and row["problems"] == []
+    assert {result["value"] for result in row["results"]} == {"31.2", "25.9"}
+    assert shown["execution"]["execution_name"] == "LACV-QPCR-SYBR-014"
+
+
+def test_required_marker_is_optional_when_reading(client):
+    assay = definition(client)
+    create_root(client, "S-001")
+
+    for header in ("sample_code", "sample_code *", "Sample Code*"):
+        shown = preview(client, assay["assay_definition_id"], workbook([(header, "LACV CT"), ("S-001", 30.1)])).json()
+        assert shown["can_import"] and shown["problems"] == [], header
+        assert shown["rows"][0]["match"] == "exact"

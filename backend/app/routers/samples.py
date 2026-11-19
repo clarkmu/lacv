@@ -15,13 +15,13 @@ from ..sample_rules import (
     require_unique_sample_code, validate_parent, validate_references,
 )
 from ..schemas import (
-    AliquotCreate, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate, SampleDetail, SampleLineage, SampleListItem, SampleRef,
-    SampleUpdate,
+    AliquotCreate, ChildSampleCreate, DataFileCreate, DerivedSampleCreate, SampleCreate, SampleDetail, SampleLineage, SampleListItem, SampleMap,
+    SampleRef, SampleUpdate,
 )
 
 router = APIRouter(prefix="/samples", tags=["samples"])
 
-SAMPLE_LOAD_OPTIONS = (selectinload(Sample.sample_type_ref), selectinload(Sample.legacy_material_records))
+SAMPLE_LOAD_OPTIONS = (selectinload(Sample.sample_type_ref), selectinload(Sample.legacy_material_records), selectinload(Sample.batch))
 
 
 @router.get("", response_model=list[SampleListItem])
@@ -31,6 +31,28 @@ def list_samples(root_only: bool = False, db: Session = Depends(get_db)):
     if root_only:
         query = query.where(Sample.parent_sample_id.is_(None))
     return db.scalars(query).all()
+
+
+@router.get("/map", response_model=SampleMap)
+def sample_map(db: Session = Depends(get_db)):
+    """Samples with both coordinates, grouped into sites: Samples recorded at exactly the same point share one site.
+
+    Samples missing a latitude or longitude are counted, never plotted or guessed.
+    """
+    located = db.scalars(
+        select(Sample)
+        .where(Sample.latitude.is_not(None), Sample.longitude.is_not(None))
+        .options(selectinload(Sample.sample_type_ref))
+        .order_by(Sample.latitude, Sample.longitude, Sample.sample_code)
+    ).all()
+    sites: dict[tuple, list[Sample]] = {}
+    for sample in located:
+        sites.setdefault((sample.latitude, sample.longitude), []).append(sample)
+    return {
+        "sites": [{"latitude": latitude, "longitude": longitude, "samples": samples} for (latitude, longitude), samples in sites.items()],
+        "located_count": len(located),
+        "unlocated_count": db.scalar(select(func.count()).select_from(Sample)) - len(located),
+    }
 
 
 @router.get("/lookup", response_model=SampleRef)
@@ -120,6 +142,7 @@ def get_sample_lineage(sample_id: int, db: Session = Depends(get_db)):
         frontier = [child.sample_id for child in level]
 
     generated_by = _generated_by([child.sample_id for child in descendants], db)
+    availabilities = _availabilities(descendants, db)
     children_by_parent: dict[int, list[Sample]] = {}
     for child in descendants:
         children_by_parent.setdefault(child.parent_sample_id, []).append(child)
@@ -128,6 +151,7 @@ def get_sample_lineage(sample_id: int, db: Session = Depends(get_db)):
         return {
             **SampleRef.model_validate(child).model_dump(),
             "generated_by": generated_by.get(child.sample_id),
+            "availability": availabilities[child.sample_id],
             "children": [node(grandchild) for grandchild in children_by_parent.get(child.sample_id, [])],
         }
 
@@ -386,6 +410,19 @@ def _storage_events_for(sample_id: int, db: Session) -> list[dict]:
         }
         for event in events
     ]
+
+
+def _availabilities(samples: list[Sample], db: Session) -> dict[int, dict]:
+    """Each Sample's availability from its own ledger (app/quantity.py), as the Sample page computes it, in one query."""
+    ledgers: dict[int, list[SampleQuantityEvent]] = {sample.sample_id: [] for sample in samples}
+    if ledgers:
+        for event in db.scalars(
+            select(SampleQuantityEvent)
+            .where(SampleQuantityEvent.sample_id.in_(ledgers.keys()))
+            .order_by(SampleQuantityEvent.event_date, SampleQuantityEvent.quantity_event_id)
+        ).all():
+            ledgers[event.sample_id].append(event)
+    return {sample.sample_id: availability(sample.current_quantity, sample.quantity_unit, ledgers[sample.sample_id]) for sample in samples}
 
 
 def _generated_by(sample_ids: list[int], db: Session) -> dict[int, dict]:

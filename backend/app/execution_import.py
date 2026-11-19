@@ -15,6 +15,11 @@ GET /api/assay-definitions/{id}/executions/import-template:
   and its value in column B. Fields: execution_name (generated when blank),
   assay_date, operator_name, notes.
 
+samples_columns() and execution_fields() declare these once: they write the
+template, are served as its documentation (.../import-template/columns), and
+decide which headers are read. A required header may carry a trailing "*"
+(the template writes "sample_code *"); it is read with or without it.
+
 Other sheets are ignored. Cells are read as stored values: a cell holding a
 formula is refused rather than calculated, and macros are never read.
 
@@ -32,15 +37,14 @@ everything again.
 import difflib
 import hashlib
 import re
-import zipfile
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from io import BytesIO
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from .models import AssayDefinition, LegacyMaterialRecord, Sample
+from .spreadsheet import TemplateColumn, WorkbookError, normalize_header, open_workbook
 
 BASE_COLUMNS = ["sample_code", "volume_used", "volume_unit"]
 EXECUTION_FIELDS = ["execution_name", "assay_date", "operator_name", "notes"]
@@ -50,20 +54,85 @@ MAX_CANDIDATES = 5
 SIMILARITY_CUTOFF = 0.8
 
 
-def template_rows(definition: AssayDefinition) -> dict[str, list[list]]:
-    result_columns = [column for field in definition.result_fields for column in (field.label, f"{field.label} interpretation")]
+def samples_columns(definition: AssayDefinition) -> list[TemplateColumn]:
+    """The Samples sheet's columns for this assay, in template order."""
+    unit = definition.typical_volume_unit or "uL"
+    columns = [TemplateColumn(
+        "sample_code", True, "The Sample's code, or an old Material code from its label. Rows whose code matches no Sample exactly are offered close matches to confirm before anything is added.",
+        "Text", "LACV-2026-0042-RNA",
+    )]
+    for field in definition.result_fields:
+        value_format = {
+            "numeric": "Number",
+            "text": "Text",
+        }.get(field.value_type, "A number, or text such as \"not detected\"")
+        value_example = {"numeric": "25.9", "text": "CPE observed"}.get(field.value_type, "31.2")
+        columns += [
+            TemplateColumn(field.label, False, f"This Sample's {field.label} result{f' in {field.unit}' if field.unit else ''}. Leave blank if the assay has not been read yet.",
+                           value_format + (f" ({field.unit})" if field.unit else ""), value_example),
+            TemplateColumn(f"{field.label} interpretation", False, f"What the {field.label} result means for this Sample.",
+                           "Text; usually positive, negative or inconclusive", "positive"),
+            TemplateColumn(f"{field.label} qc_status", False, f"QC of this Sample's {field.label} result. Blank means not reviewed. Not in the template; add the column if you need it.",
+                           "One of: not_reviewed, accepted, rejected", "not_reviewed", in_template=False),
+        ]
+    columns += [
+        TemplateColumn("volume_used", False, "Volume of the Sample the assay used. It is deducted from the Sample's remaining quantity when the execution is saved.",
+                       "Number greater than 0", str(definition.typical_volume.normalize()) if definition.typical_volume else "2"),
+        TemplateColumn("volume_unit", False, "Unit of volume_used. Blank means the Sample's own quantity unit.", "A volume unit such as uL or mL", unit),
+    ]
+    return columns
+
+
+def execution_fields() -> list[TemplateColumn]:
+    """The optional Execution sheet: one field per row, its name in column A and its value in column B."""
+    return [
+        TemplateColumn("execution_name", False, "A name for this run, unique within the assay. Blank generates the next one (<assay code>-NNN).", "Text, up to 100 characters", "LACV-QPCR-SYBR-014"),
+        TemplateColumn("assay_date", False, "When the assay was run.", "Date as YYYY-MM-DD, optionally with a time (YYYY-MM-DD HH:MM), or an Excel date cell", "2026-11-03 14:05"),
+        TemplateColumn("operator_name", False, "Who performed the run.", "Text, up to 150 characters", "J. Chen"),
+        TemplateColumn("notes", False, "Plate layout, kit lot, deviations.", "Text", "Plate 3; kit lot 2291"),
+    ]
+
+
+def template_docs(definition: AssayDefinition) -> dict:
+    return {
+        "title": f"{definition.assay_name} execution template",
+        "file_name": f"{_file_stem(definition)}-execution.xlsx",
+        "sheets": [
+            {"name": "Samples", "description": "Required. Row 1 holds the column names; each row below it is one Sample in this execution. Every result column may be left blank.",
+             "columns": [column.doc() for column in samples_columns(definition)]},
+            {"name": "Execution", "description": "Optional. One detail per row: the field name in column A and its value in column B. The values fill in the new execution's form.",
+             "columns": [column.doc() for column in execution_fields()]},
+        ],
+        "notes": [
+            "Columns marked * are required. The * may be kept or removed; LACV reads the column either way.",
+            "Enter values, not formulas: a cell holding a formula is refused.",
+            "Nothing is saved when the file is chosen: you review every row and choose the Sample for any code that does not match exactly.",
+        ],
+    }
+
+
+def template_sheets(definition: AssayDefinition) -> dict:
+    """The template workbook's sheets, for app/spreadsheet.template_workbook."""
     result_hint = ", ".join(f"{field.label}{f' ({field.unit})' if field.unit else ''}" for field in definition.result_fields) or "none"
     return {
         # Header only: one row per Sample goes below it.
-        "Samples": [["sample_code", *result_columns, "volume_used", "volume_unit"]],
-        "Execution": [
+        "Samples": (samples_columns(definition), []),
+        "Execution": (None, [
             ["field", "value"],
             ["execution_name", ""],
             ["assay_date", datetime.now().replace(second=0, microsecond=0)],
             ["operator_name", ""],
             ["notes", f"{definition.assay_name}; result columns: {result_hint}; leave them blank if the assay has not been done yet"],
-        ],
+        ]),
     }
+
+
+def _file_stem(definition: AssayDefinition) -> str:
+    return re.sub(r"[^A-Za-z0-9-]+", "-", definition.assay_code).lower()
+
+
+def template_file_name(definition: AssayDefinition) -> str:
+    return f"{_file_stem(definition)}-execution.xlsx"
 
 
 def read_execution_workbook(content: bytes, file_name: str, definition: AssayDefinition, db: Session) -> dict:
@@ -73,12 +142,10 @@ def read_execution_workbook(content: bytes, file_name: str, definition: AssayDef
     source = {"file_name": file_name, "sha256": hashlib.sha256(content).hexdigest(), "sheets": []}
     problems: list[str] = []
     try:
-        from openpyxl import load_workbook
-
         # read_only streams the sheets; data_only=False keeps formulas visible so they can be refused.
-        workbook = load_workbook(BytesIO(content), read_only=True, data_only=False, keep_vba=False)
-    except (zipfile.BadZipFile, KeyError, ValueError, OSError) as error:
-        return _preview(source, None, [], [f"The file is not a readable .xlsx workbook ({error.__class__.__name__})"])
+        workbook = open_workbook(content, file_name, data_only=False)
+    except WorkbookError as error:
+        return _preview(source, None, [], [str(error)])
     try:
         source["sheets"] = list(workbook.sheetnames)
         sheets = {name.strip().lower(): workbook[name] for name in workbook.sheetnames}
@@ -260,7 +327,7 @@ def _rows(sheet, problems: list[str], sheet_label: str) -> list[tuple[int, list]
 
 
 def _header(value) -> str:
-    return "_".join(str(value).strip().lower().split()) if value not in (None, "") else ""
+    return normalize_header(value)
 
 
 def _text(value) -> str | None:
